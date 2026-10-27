@@ -1,0 +1,41 @@
+{
+  "commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "files": [
+    {
+      "local": "base.cordis.patch.yml",
+      "path": "packages/bundle/base/cordis.patch.yml",
+      "git_blob": "7d63cf26679f81565ecaf09e901dda6056894682",
+      "sha256": "a2cc57868a4d016609801e28781262515483dde29b41c2742d9a3b27a6f52f77"
+    },
+    {
+      "local": "web-app.cordis.patch.yml",
+      "path": "packages/bundle/web-app/cordis.patch.yml",
+      "git_blob": "a56cda5e3abc1798043da9509bb0f837d53bd3a6",
+      "sha256": "3e1f923309612ed8551141127409d662e78758e2d0d125218a3f70514417e472"
+    },
+    {
+      "local": "standard.patch.yml",
+      "path": "packages/bundle/web-app/presets/standard.patch.yml",
+      "git_blob": "225a756973384c7f5c153eccd4c210b6a4cb7e47",
+      "sha256": "0d398d2a6872a73a106cb3bd19303ecccf1637e1fcad4d0bf9d8a72d2c2c68f5"
+    },
+    {
+      "local": "minimal.patch.yml",
+      "path": "packages/bundle/web-app/presets/minimal.patch.yml",
+      "git_blob": "043e34cb01c2d6b11f3009991c76492da3cfdd0c",
+      "sha256": "a2a9ba1c9c392a45466708f18bc0aefbf300577f9b544dc06049f73a8a5b3267"
+    },
+    {
+      "local": "ptc.patch.yml",
+      "path": "packages/bundle/web-app/presets/ptc.patch.yml",
+      "git_blob": "e89cc60b8584f11e28fe2e7b6aa5558a4ad662f3",
+      "sha256": "9e355c947bf61c3d2fe9bf3214b386f83c0d99d37579ce22576d4b82cb6e1a2c"
+    },
+    {
+      "local": "cordis.patch.yml",
+      "path": "packages/bundle/web-app/presets/cordis.patch.yml",
+      "git_blob": "2ed95bb0b1b574ce9676197ac7ad439ca4cf16ca",
+      "sha256": "01b0fc94fd49136b332254a7ae5658e43ffe646f7248047dba65d499cfc74596"
+    }
+  ]
+}

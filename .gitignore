@@ -1,0 +1,6 @@
+/bin/
+/.dsgo/
+/.cache/
+*.test
+coverage.out
+.DS_Store
