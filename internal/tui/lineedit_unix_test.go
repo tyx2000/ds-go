@@ -39,6 +39,8 @@ func newEditorHarness(t *testing.T, cols uint16) *editorHarness {
 		h.shown.WriteString(s)
 		h.mu.Unlock()
 	})
+	// Tests drive the position report themselves, whatever TERM the runner has.
+	h.editor.query = true
 	return h
 }
 
@@ -179,5 +181,33 @@ func TestLayoutFollowsTerminalWrapping(t *testing.T) {
 		if row, col := layout(c.start, c.cols, []rune(c.text)); row != c.row || col != c.col {
 			t.Fatalf("%q from %d in %d columns: got %d,%d want %d,%d", c.text, c.start, c.cols, row, col, c.row, c.col)
 		}
+	}
+}
+
+func TestLineEditorOnDumbTerminalSkipsPositionQuery(t *testing.T) {
+	if _, err := exec.LookPath("stty"); err != nil {
+		t.Skip("stty unavailable")
+	}
+	t.Setenv("TERM", "dumb")
+	h := newEditorHarness(t, 80)
+	h.editor = NewLineEditor(h.editor.in, h.editor.tty, h.editor.tty, h.editor.write)
+	if h.editor.query {
+		t.Fatal("a dumb terminal was sent a position query")
+	}
+	before := terminalState(t, h.editor.tty)
+	done := make(chan string, 1)
+	go func() { line, _ := h.editor.ReadLine(); done <- line }()
+	// Without a query to wait for, wait until the line mode is in effect.
+	for deadline := time.Now().Add(3 * time.Second); terminalState(t, h.editor.tty) == before; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("line mode never applied")
+		}
+	}
+	h.master.Write([]byte("中\x7fok\r"))
+	if line := <-done; line != "ok\n" {
+		t.Fatalf("line %q", line)
+	}
+	if out := h.output(); strings.Contains(out, "\x1b") || !strings.Contains(out, "中\b\b  \b\b") {
+		t.Fatalf("dumb terminal output: %q", out)
 	}
 }

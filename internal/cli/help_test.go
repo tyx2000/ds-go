@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bufio"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+
+	"dsgo/internal/tui"
 )
 
 // The help text lists every slash command on its own line, so a command
@@ -44,5 +47,21 @@ func TestSlashHelpListsEveryCommandOnItsOwnLine(t *testing.T) {
 		if strings.HasPrefix(line, "  /") && len(strings.Fields(line)) < 3 {
 			t.Errorf("command without a description: %q", line)
 		}
+	}
+}
+
+func TestPromptIsHighlightedOnlyOnInteractiveTerminals(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	a := &App{}
+	if got := a.promptLabel("dsgo>"); got != "dsgo>" {
+		t.Fatalf("piped prompt carried escapes: %q", got)
+	}
+	a.editor = tui.NewLineEditor(bufio.NewReader(strings.NewReader("")), nil, nil, func(string) {})
+	if got := a.promptLabel("dsgo>"); got != "\x1b[1;36mdsgo>\x1b[0m" {
+		t.Fatalf("terminal prompt not highlighted: %q", got)
+	}
+	t.Setenv("NO_COLOR", "1")
+	if got := a.promptLabel("dsgo>"); got != "dsgo>" {
+		t.Fatalf("NO_COLOR ignored: %q", got)
 	}
 }

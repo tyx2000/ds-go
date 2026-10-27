@@ -96,8 +96,9 @@ type inputRequest struct{ reply chan inputLine }
 
 func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a := &App{in: bufio.NewReader(in), out: out, err: errOut, flags: flags{home: state.DefaultRoot()}}
-	// Interactive prompts edit whole characters; pipes keep line reading.
-	if tty, ok := in.(*os.File); ok && tui.IsTerminal(tty) {
+	// Interactive prompts edit whole characters; pipes keep line reading, and
+	// Emacs shell buffers keep canonical mode because Emacs edits the line.
+	if tty, ok := in.(*os.File); ok && tui.IsTerminal(tty) && os.Getenv("INSIDE_EMACS") == "" {
 		if screen, ok := out.(*os.File); ok && tui.IsTerminal(screen) {
 			a.editor = tui.NewLineEditor(a.in, tty, screen, func(s string) {
 				a.writeMu.Lock()
@@ -354,6 +355,16 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return a.fail(err)
 	}
 	return 0
+}
+
+// promptLabel highlights a prompt on an interactive terminal so typed input
+// stands apart from output. Pipes, dumb terminals and NO_COLOR keep the plain
+// text.
+func (a *App) promptLabel(label string) string {
+	if a.editor == nil || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return label
+	}
+	return "\x1b[1;36m" + label + "\x1b[0m"
 }
 
 func (a *App) fail(err error) int { fmt.Fprintf(a.err, "dsgo: %s\n", clean(err.Error())); return 1 }
@@ -651,7 +662,7 @@ func (a *App) chat() error {
 	}
 	for {
 		a.inputMu.Lock()
-		a.line("\ndsgo> ")
+		a.line("\n%s ", a.promptLabel("dsgo>"))
 		line, err := a.readLine(a.ctx)
 		a.inputMu.Unlock()
 		eof := errors.Is(err, io.EOF)
@@ -661,7 +672,7 @@ func (a *App) chat() error {
 		line = strings.TrimRight(line, "\r\n")
 		for strings.HasSuffix(line, "\\") && !eof {
 			line = strings.TrimSuffix(line, "\\") + "\n"
-			a.line("... ")
+			a.line("%s ", a.promptLabel("..."))
 			a.inputMu.Lock()
 			next, x := a.readLine(a.ctx)
 			a.inputMu.Unlock()

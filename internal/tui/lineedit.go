@@ -27,6 +27,7 @@ type LineEditor struct {
 	tty   *os.File
 	cols  func() int
 	write func(string)
+	query bool // ask for the cursor position; a dumb terminal cannot answer
 
 	mu     sync.Mutex
 	active bool
@@ -42,7 +43,7 @@ type LineEditor struct {
 // NewLineEditor edits lines read from in, a buffered reader over the terminal
 // tty. write must serialize with the application's other terminal output.
 func NewLineEditor(in *bufio.Reader, tty, out *os.File, write func(string)) *LineEditor {
-	return &LineEditor{in: in, tty: tty, write: write, cols: func() int { cols, _ := terminalSize(out); return cols }}
+	return &LineEditor{in: in, tty: tty, write: write, query: os.Getenv("TERM") != "dumb", cols: func() int { cols, _ := terminalSize(out); return cols }}
 }
 
 // ReadLine returns one line including its trailing newline, like
@@ -57,8 +58,10 @@ func (e *LineEditor) ReadLine() (string, error) {
 	e.active, e.buf, e.start, e.row, e.restore = true, e.buf[:0], 0, 0, restore
 	// The report arrives in the input stream ahead of typed keys. Pasted lines
 	// can return before theirs arrives, so earlier reports are discarded.
-	e.asked++
-	e.write("\x1b[6n")
+	if e.query {
+		e.asked++
+		e.write("\x1b[6n")
+	}
 	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()

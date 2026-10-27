@@ -39,6 +39,7 @@ func rawTerminal(file *os.File) (func(), error) {
 	}
 	return func() { _ = ioctl(file.Fd(), syscall.TIOCSETA, unsafe.Pointer(&before)) }, nil
 }
+
 // lineTerminal reads key by key without echo for the prompt editor. Output
 // processing, CR-to-NL input mapping and signal keys keep their usual meaning.
 func lineTerminal(file *os.File) (func(), error) {

@@ -52,4 +52,8 @@ an answer it erases in place. Supported keys: Backspace, Ctrl+U, Ctrl+W,
 Ctrl+D on an empty line, and Ctrl+C, which clears the typed line. Editing is
 at the end of the line; cursor movement and history are not implemented, and
 output printed by background work while typing is not redrawn around the
-input. Pipes keep plain line reading.
+input. Pipes keep plain line reading. A `TERM=dumb` terminal is not sent the
+position query and always erases in place; inside Emacs (`INSIDE_EMACS`),
+where Emacs edits the line, prompts keep canonical reading. On a color-capable
+terminal the `dsgo>` and `...` prompts are bold cyan so input stands apart from
+output; `NO_COLOR`, dumb terminals and pipes keep them plain.
