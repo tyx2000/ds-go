@@ -696,11 +696,57 @@ func (a *App) recoverScheduled(ctx context.Context) error {
 	return nil
 }
 
-const slashHelp = `/new /sessions /resume ID /fork /rename TITLE /archive
-/history /export markdown|json|jsonl [PATH] /status /compact /continue
-/model NAME /provider NAME /thinking off|low|high|max /permission read-only|workspace-write|full-access
-/preset standard|ptc|minimal|cordis /mode native|ptc|ptc-repl /plan on|off /goal TEXT /todo
-/skills [NAME] /attach PATH /files [PATH] /read PATH /preview PATH [JSON] /diff
-/cwd [PATH] /jobs [JSON] /terminal [JSON] /agents /workflows /artifacts /trajectory /stats /schedules /quit
-End a line with \ for multiline input. Ctrl+C cancels a running turn.
+const slashHelp = `Sessions
+  /new                    Start a new session in this workspace
+  /sessions [QUERY]       List sessions, or search titles and folders
+  /resume [ID]            Switch to a session (default: the latest)
+  /fork                   Copy this session into a new one
+  /rename TITLE           Rename this session
+  /archive                Archive this session and start a new one
+  /history                Show this session's messages
+  /export FORMAT [PATH]   Export as markdown, json or jsonl
+  /status                 Show session details, mode and preset
+
+Model and behavior
+  /model [NAME]           Set the model (no NAME: show settings)
+  /provider [NAME]        Switch to a configured provider
+  /thinking [LEVEL]       Set reasoning: off, low, high or max
+  /permission [MODE]      File access: read-only, workspace-write, full-access
+  /preset [NAME]          Show or set: standard, ptc, minimal or cordis
+  /mode [MODE]            Code execution: native, ptc or ptc-repl
+  /plan [on|off]          Plan mode: no changes until you approve
+
+Context and tasks
+  /compact                Summarize history to free context space
+  /continue               Ask the model to continue unfinished work
+  /goal TEXT              Set a goal the agent keeps working toward
+  /goal ACTION            Goal control: status, pause, resume or clear
+  /todo                   Show the current todo list
+  /skills [NAME]          List skills, or show one skill's instructions
+
+Files and workspace
+  /cwd [PATH]             Show or change the working directory
+  /files [PATH]           List a directory
+  /read PATH              Show a text file with line numbers
+  /preview PATH [JSON]    Preview documents, images, sheets, HTML, PDF
+  /attach PATH            Attach a file or image to your next message
+  /diff                   Show uncommitted Git changes
+  /artifacts [ARGS]       Deliverables, per-turn changes, full outputs
+
+Background work
+  /jobs [JSON]            List background jobs, or act on one (JSON)
+  /terminal [JSON]        List terminals, or start/read/write/stop one
+  /agents                 List subagents and their status
+  /workflows [RUN_ID]     Show workflow runs (cancel RUN_ID stops one)
+  /schedules              List saved reminders
+
+Inspection
+  /trajectory [N]         Browse turns, tool calls and timing
+  /stats                  Show session statistics and token usage
+
+  /help                   Show this list
+  /quit                   Exit dsgo (also /exit)
+
+End a line with \ to continue on the next line. Ctrl+C cancels the running
+turn or clears the line being typed. Ctrl+D on an empty line exits.
 `

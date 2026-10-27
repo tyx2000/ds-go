@@ -45,6 +45,10 @@ func (a *App) acquireSignals() func() {
 }
 
 func (a *App) interruptCurrent(sig os.Signal) {
+	if a.editor != nil {
+		// Ctrl+C at the prompt discards the typed line, as in a shell.
+		a.editor.Interrupt()
+	}
 	id, _ := a.current.Load().(string)
 	if sig == syscall.SIGTERM && a.cancel != nil {
 		a.cancel()

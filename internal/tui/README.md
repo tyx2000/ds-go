@@ -38,3 +38,18 @@ surfaces, not a complete replacement for every Web panel or composer interaction
 Tests cover projection, counters, failed/partial/recovered rows, PTC concurrency
 pairing, exact recorded arguments, unknown timing, control injection, CJK wrapping,
 keyboard/search navigation and a real PTY quit/cancel restoration check.
+
+## Prompt line editor
+
+When stdin and stdout are terminals, `dsgo` prompts read through `LineEditor`
+instead of the kernel's canonical line editing, which erases one byte and one
+column per Backspace and so leaves half of a CJK character on screen and
+partial UTF-8 in the line. The editor turns off echo and canonical mode for the
+duration of one line (signal keys keep working), deletes whole characters and
+erases their display width. It asks the terminal for the starting column so
+that deletions across wrapped rows redraw from the first input cell; without
+an answer it erases in place. Supported keys: Backspace, Ctrl+U, Ctrl+W,
+Ctrl+D on an empty line, and Ctrl+C, which clears the typed line. Editing is
+at the end of the line; cursor movement and history are not implemented, and
+output printed by background work while typing is not redrawn around the
+input. Pipes keep plain line reading.

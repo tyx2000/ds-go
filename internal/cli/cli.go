@@ -25,6 +25,7 @@ import (
 	"dsgo/internal/schedule"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
+	"dsgo/internal/tui"
 	"dsgo/internal/workflow"
 )
 
@@ -61,6 +62,7 @@ type App struct {
 	skills          []instructions.Skill
 	session         core.Session
 	writeMu         sync.Mutex
+	editor          *tui.LineEditor // nil unless stdin and stdout are terminals
 	inputMu         sync.Mutex
 	inputOnce       sync.Once
 	reads           chan inputRequest
@@ -94,6 +96,17 @@ type inputRequest struct{ reply chan inputLine }
 
 func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a := &App{in: bufio.NewReader(in), out: out, err: errOut, flags: flags{home: state.DefaultRoot()}}
+	// Interactive prompts edit whole characters; pipes keep line reading.
+	if tty, ok := in.(*os.File); ok && tui.IsTerminal(tty) {
+		if screen, ok := out.(*os.File); ok && tui.IsTerminal(screen) {
+			a.editor = tui.NewLineEditor(a.in, tty, screen, func(s string) {
+				a.writeMu.Lock()
+				defer a.writeMu.Unlock()
+				_, _ = io.WriteString(a.out, s)
+			})
+			defer a.editor.Close()
+		}
+	}
 	fs := flag.NewFlagSet("dsgo", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	a.flags.bind(fs)
@@ -530,7 +543,13 @@ func (a *App) readLine(ctx context.Context) (string, error) {
 			for {
 				select {
 				case req := <-a.reads:
-					s, err := a.in.ReadString('\n')
+					var s string
+					var err error
+					if a.editor != nil {
+						s, err = a.editor.ReadLine()
+					} else {
+						s, err = a.in.ReadString('\n')
+					}
 					req.reply <- inputLine{s, err}
 				case <-a.ctx.Done():
 					return

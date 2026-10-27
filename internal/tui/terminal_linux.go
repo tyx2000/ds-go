@@ -39,6 +39,22 @@ func rawTerminal(file *os.File) (func(), error) {
 	}
 	return func() { _ = ioctl(file.Fd(), syscall.TCSETS, unsafe.Pointer(&before)) }, nil
 }
+// lineTerminal reads key by key without echo for the prompt editor. Output
+// processing, CR-to-NL input mapping and signal keys keep their usual meaning.
+func lineTerminal(file *os.File) (func(), error) {
+	var before syscall.Termios
+	if err := ioctl(file.Fd(), syscall.TCGETS, unsafe.Pointer(&before)); err != nil {
+		return nil, err
+	}
+	line := before
+	line.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.IEXTEN
+	line.Cc[syscall.VMIN] = 1
+	line.Cc[syscall.VTIME] = 0
+	if err := ioctl(file.Fd(), syscall.TCSETS, unsafe.Pointer(&line)); err != nil {
+		return nil, err
+	}
+	return func() { _ = ioctl(file.Fd(), syscall.TCSETS, unsafe.Pointer(&before)) }, nil
+}
 func terminalSize(file *os.File) (int, int) {
 	if file == nil {
 		return 80, 24
