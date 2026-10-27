@@ -218,12 +218,18 @@ func TestSubagentForkInheritsProviderWorkspacePermissionsAndHistory(t *testing.T
 	a, parent := lifecycleApp(t, lifecycleModel(func(ctx context.Context, req core.Request, emit func(core.Delta)) (core.Response, error) {
 		return core.Response{Content: []core.Block{{Type: "text", Text: "finished"}}}, nil
 	}))
+	if _, err := a.store.Append(parent.ID, "prior", "turn/started", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
 	_, err := a.store.Append(parent.ID, "prior", "user/message", core.TextMessage("user", "prior task"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = a.store.Append(parent.ID, "prior", "assistant/message", core.TextMessage("assistant", "prior answer"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.store.Append(parent.ID, "prior", "turn/finished", map[string]any{"status": "completed"}); err != nil {
 		t.Fatal(err)
 	}
 	id, err := a.manager.spawn(parent.ID, "fork task", "forked", "fork")

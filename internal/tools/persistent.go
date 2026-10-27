@@ -306,7 +306,11 @@ func (e *nodeEnvironment) readLoop() {
 						reply["error"] = res.Content
 					} else {
 						var v any
-						d := json.NewDecoder(strings.NewReader(res.Content))
+						canonical := res.Content
+						if len(res.Value) > 0 {
+							canonical = string(res.Value)
+						}
+						d := json.NewDecoder(strings.NewReader(canonical))
 						d.UseNumber()
 						if d.Decode(&v) != nil {
 							v = res.Content

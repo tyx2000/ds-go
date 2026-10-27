@@ -7,7 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	_ "image/gif"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"math"
@@ -48,6 +48,12 @@ type ImageRef struct {
 	OriginalDimensions *ImageDimensions `json:"originalDimensions,omitempty"`
 }
 
+type ImageInput struct {
+	Data      []byte
+	MediaType string
+	Name      string
+}
+
 func (ref ImageRef) Source() map[string]any {
 	source := map[string]any{"type": "dsgo_attachment", "id": strings.TrimPrefix(ref.AttachmentID, "sha256:"), "media_type": ref.MediaType, "bytes": ref.Bytes, "width": ref.Width, "height": ref.Height}
 	if ref.Name != "" {
@@ -76,47 +82,104 @@ func imageFailure(code, message string) error { return &ImageError{Code: code, M
 // SaveImage fully validates and normalizes before publishing a durable ref.
 // Existing Put remains the byte-level compatibility API for older dsgo logs.
 func (s *Store) SaveImage(ctx context.Context, data []byte, mediaType, name string) (ImageRef, error) {
+	ref, prepared, err := s.prepareImage(ctx, data, mediaType, name)
+	if err != nil {
+		return ImageRef{}, err
+	}
+	return s.commitImage(ref, prepared)
+}
+
+// SaveImages refuses an invalid batch before publishing any of its images.
+// This is the same preflight boundary used by official media projections: one
+// image refusal must not leave some of the result's images admitted as refs.
+func (s *Store) SaveImages(ctx context.Context, inputs []ImageInput) ([]ImageRef, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(inputs) > MaxImagesPerMessage {
+		return nil, imageFailure("TOO_MANY_IMAGES", "Message exceeds the configured image-count limit.")
+	}
+	total := 0
+	for _, input := range inputs {
+		if len(input.Data) > MaxMessageImageBytes-total {
+			return nil, imageFailure("MESSAGE_IMAGES_TOO_LARGE", "Message exceeds the configured aggregate image-byte limit.")
+		}
+		total += len(input.Data)
+	}
+	refs := make([]ImageRef, len(inputs))
+	prepared := make([][]byte, len(inputs))
+	for i, input := range inputs {
+		var err error
+		refs[i], prepared[i], err = s.prepareImage(ctx, input.Data, input.MediaType, input.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for i := range refs {
+		var err error
+		refs[i], err = s.commitImage(refs[i], prepared[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return refs, nil
+}
+
+func (s *Store) commitImage(ref ImageRef, data []byte) (ImageRef, error) {
+	source, err := s.Put(data, ref.MediaType)
+	if err != nil {
+		return ImageRef{}, err
+	}
+	ref.AttachmentID = "sha256:" + source["id"].(string)
+	ref.Bytes = len(data)
+	return ref, nil
+}
+
+func (s *Store) prepareImage(ctx context.Context, data []byte, mediaType, name string) (ImageRef, []byte, error) {
 	select {
 	case s.compression <- struct{}{}:
 		defer func() { <-s.compression }()
 	case <-ctx.Done():
-		return ImageRef{}, ctx.Err()
+		return ImageRef{}, nil, ctx.Err()
 	}
 	if err := ctx.Err(); err != nil {
-		return ImageRef{}, err
+		return ImageRef{}, nil, err
 	}
 	if len(data) > MaxImageBytes {
-		return ImageRef{}, imageFailure("IMAGE_TOO_LARGE", "Image exceeds the configured byte limit.")
+		return ImageRef{}, nil, imageFailure("IMAGE_TOO_LARGE", "Image exceeds the configured byte limit.")
 	}
 	if len(data) == 0 {
-		return ImageRef{}, imageFailure("INVALID_IMAGE", "Image is empty.")
+		return ImageRef{}, nil, imageFailure("INVALID_IMAGE", "Image is empty.")
 	}
 	if !supportedImageType(mediaType) {
-		return ImageRef{}, imageFailure("UNSUPPORTED_IMAGE_TYPE", "Image type is not accepted by this deployment.")
+		return ImageRef{}, nil, imageFailure("UNSUPPORTED_IMAGE_TYPE", "Image type is not accepted by this deployment.")
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return ImageRef{}, imageFailure("INVALID_IMAGE", "Image bytes do not decode as PNG/JPEG/WebP/GIF.")
+		return ImageRef{}, nil, imageFailure("INVALID_IMAGE", "Image bytes do not decode as PNG/JPEG/WebP/GIF.")
 	}
 	actual := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}[format]
 	if config.Width < 1 || config.Height < 1 {
-		return ImageRef{}, imageFailure("INVALID_IMAGE", "Image dimensions are invalid.")
+		return ImageRef{}, nil, imageFailure("INVALID_IMAGE", "Image dimensions are invalid.")
 	}
 	if config.Width > MaxImageDimension || config.Height > MaxImageDimension {
-		return ImageRef{}, imageFailure("IMAGE_DIMENSION_TOO_LARGE", "Image exceeds the configured per-side dimension limit.")
+		return ImageRef{}, nil, imageFailure("IMAGE_DIMENSION_TOO_LARGE", "Image exceeds the configured per-side dimension limit.")
 	}
 	if int64(config.Width)*int64(config.Height) > MaxImagePixels {
-		return ImageRef{}, imageFailure("IMAGE_TOO_MANY_PIXELS", "Image exceeds the configured decoded pixel limit.")
+		return ImageRef{}, nil, imageFailure("IMAGE_TOO_MANY_PIXELS", "Image exceeds the configured decoded pixel limit.")
 	}
 	if actual != mediaType {
-		return ImageRef{}, imageFailure("IMAGE_TYPE_MISMATCH", "Declared image type does not match its bytes.")
+		return ImageRef{}, nil, imageFailure("IMAGE_TYPE_MISMATCH", "Declared image type does not match its bytes.")
 	}
 	raster, err := decodeRaster(data, format, config)
 	if err != nil {
-		return ImageRef{}, imageFailure("INVALID_IMAGE", "Image bytes do not fully decode.")
+		return ImageRef{}, nil, imageFailure("INVALID_IMAGE", "Image bytes do not fully decode.")
 	}
 	if err := ctx.Err(); err != nil {
-		return ImageRef{}, err
+		return ImageRef{}, nil, err
 	}
 	orientation := imageOrientation(data, format)
 	raster = orientImage(raster, orientation)
@@ -133,28 +196,25 @@ func (s *Store) SaveImage(ctx context.Context, data []byte, mediaType, name stri
 			xdraw.CatmullRom.Scale(resized, resized.Bounds(), raster, raster.Bounds(), draw.Src, nil)
 			raster = resized
 		}
-		prepared, mediaType, err = encodeNormalized(ctx, raster)
+		prepared, mediaType, err = encodeImageWithinBytesAlpha(ctx, raster, NormalizedMaxBytes, imageAlphaChannel(data, format, raster))
 		if err != nil {
-			return ImageRef{}, err
+			return ImageRef{}, nil, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return ImageRef{}, err
+		return ImageRef{}, nil, err
 	}
-	source, err := s.Put(prepared, mediaType)
-	if err != nil {
-		return ImageRef{}, err
-	}
-	ref.AttachmentID = "sha256:" + source["id"].(string)
 	ref.MediaType = mediaType
-	ref.Bytes = len(prepared)
-	return ref, nil
+	return ref, prepared, nil
 }
 
 // Native WebP's Go decoder handles still frames. The animation container is
 // reduced to its first composited frame, matching the official static-image
 // attachment contract without adding another decoder executable dependency.
 func decodeRaster(data []byte, format string, config image.Config) (image.Image, error) {
+	if format == "gif" {
+		return gifFirstCanvas(data, config)
+	}
 	if format != "webp" || len(data) < 30 || string(data[12:16]) != "VP8X" || data[20]&2 == 0 {
 		raster, _, err := image.Decode(bytes.NewReader(data))
 		return raster, err
@@ -224,6 +284,40 @@ func decodeRaster(data []byte, format string, config image.Config) (image.Image,
 	return nil, imageFailure("INVALID_IMAGE", "Animated WebP has no decodable first frame.")
 }
 
+// GIF decoders return the image descriptor's first rectangle, which may be
+// smaller than and offset within the logical screen. Build just that first
+// canvas; DecodeAll would unnecessarily expand every animation frame.
+func gifFirstCanvas(data []byte, config image.Config) (image.Image, error) {
+	frame, err := gif.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	bounds := image.Rect(0, 0, config.Width, config.Height)
+	if !frame.Bounds().In(bounds) {
+		return nil, imageFailure("INVALID_IMAGE", "GIF frame exceeds its logical screen.")
+	}
+	background := color.NRGBA{}
+	if palette, ok := config.ColorModel.(color.Palette); ok && len(data) > 11 && int(data[11]) < len(palette) {
+		background = color.NRGBAModel.Convert(palette[int(data[11])]).(color.NRGBA)
+	}
+	// Transparent GIFs are rendered over a transparent application canvas;
+	// the transparent palette entry must not be flattened into the GCT color.
+	if palette, ok := frame.ColorModel().(color.Palette); ok {
+		for _, entry := range palette {
+			if _, _, _, alpha := entry.RGBA(); alpha == 0 {
+				background = color.NRGBA{}
+				break
+			}
+		}
+	}
+	canvas := image.NewNRGBA(bounds)
+	if background.A != 0 {
+		draw.Draw(canvas, bounds, image.NewUniform(background), image.Point{}, draw.Src)
+	}
+	draw.Draw(canvas, frame.Bounds(), frame, frame.Bounds().Min, draw.Over)
+	return canvas, nil
+}
+
 func webpChunk(kind string, payload []byte) []byte {
 	chunk := make([]byte, 8, len(payload)+9)
 	copy(chunk, kind)
@@ -270,6 +364,17 @@ func NormalizedDimensions(width, height int) (int, int) {
 }
 
 func encodeNormalized(ctx context.Context, raster image.Image) ([]byte, string, error) {
+	return encodeImageWithinBytes(ctx, raster, NormalizedMaxBytes)
+}
+
+// Normalization and provider-request variants use the same official lazy
+// quality ladder. The byte budget is a target: if no quality fits, preserve the
+// smallest result instead of repeatedly shrinking the chosen raster geometry.
+func encodeImageWithinBytes(ctx context.Context, raster image.Image, maxBytes int) ([]byte, string, error) {
+	return encodeImageWithinBytesAlpha(ctx, raster, maxBytes, hasTransparentPixels(raster))
+}
+
+func hasTransparentPixels(raster image.Image) bool {
 	alpha := false
 	if opaque, ok := raster.(interface{ Opaque() bool }); ok {
 		alpha = !opaque.Opaque()
@@ -285,6 +390,50 @@ func encodeNormalized(ctx context.Context, raster image.Image) ([]byte, string, 
 			}
 		}
 	}
+	return alpha
+}
+
+// Codec selection follows the source alpha-channel fact. An RGBA PNG whose
+// pixels happen to be opaque still selects WebP when a transform is required.
+func imageAlphaChannel(data []byte, format string, raster image.Image) bool {
+	switch format {
+	case "jpeg":
+		return false
+	case "png":
+		if len(data) > 25 && (data[25] == 4 || data[25] == 6) {
+			return true
+		}
+		for p := 8; p+12 <= len(data); {
+			size := int(binary.BigEndian.Uint32(data[p : p+4]))
+			if size > len(data)-p-12 {
+				return hasTransparentPixels(raster)
+			}
+			if string(data[p+4:p+8]) == "tRNS" {
+				return true
+			}
+			p += size + 12
+		}
+	case "webp":
+		for p := 12; p+8 <= len(data); {
+			size := int(binary.LittleEndian.Uint32(data[p+4 : p+8]))
+			if size > len(data)-p-8 {
+				return hasTransparentPixels(raster)
+			}
+			kind := string(data[p : p+4])
+			payload := data[p+8 : p+8+size]
+			if kind == "VP8X" && len(payload) > 0 {
+				return payload[0]&0x10 != 0
+			}
+			if kind == "VP8L" && len(payload) >= 5 {
+				return binary.LittleEndian.Uint32(payload[1:5])&(1<<28) != 0
+			}
+			p += 8 + size + (size & 1)
+		}
+	}
+	return hasTransparentPixels(raster)
+}
+
+func encodeImageWithinBytesAlpha(ctx context.Context, raster image.Image, maxBytes int, alpha bool) ([]byte, string, error) {
 	var smallest []byte
 	mediaType := "image/jpeg"
 	var pngBytes bytes.Buffer
@@ -306,7 +455,7 @@ func encodeNormalized(ctx context.Context, raster image.Image) ([]byte, string, 
 		}
 		var candidate bytes.Buffer
 		if alpha {
-			command := exec.CommandContext(ctx, encoder, "-quiet", "-q", strconv.Itoa(quality), "-metadata", "none", "-o", "-", "--", "-")
+			command := exec.CommandContext(ctx, encoder, "-quiet", "-q", strconv.Itoa(quality), "-m", "0", "-metadata", "none", "-o", "-", "--", "-")
 			command.Stdin = bytes.NewReader(pngBytes.Bytes())
 			command.Stdout = &candidate
 			if err := command.Run(); err != nil {
@@ -322,7 +471,7 @@ func encodeNormalized(ctx context.Context, raster image.Image) ([]byte, string, 
 		if smallest == nil || len(encoded) < len(smallest) {
 			smallest = append([]byte(nil), encoded...)
 		}
-		if len(encoded) <= NormalizedMaxBytes {
+		if len(encoded) <= maxBytes {
 			return append([]byte(nil), encoded...), mediaType, nil
 		}
 	}

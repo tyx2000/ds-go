@@ -254,7 +254,12 @@ func (r *Run) drive(ctx context.Context, o Options, req Request, node string) {
 		r.emit(Event{Type: "run-end", StopReason: result.StopReason})
 		close(r.done)
 	}()
-	cmd, cleanup, err := o.Command(ctx, req.CWD, req.WorkspaceRoot, req.Permission, node, "--max-old-space-size=512", "--no-warnings", "-e", runtimeSource)
+	// Transport failures must stop the guest without changing the caller's
+	// cancellation state. In particular, a frame overflow can leave the guest
+	// blocked writing fd3 after Scanner has stopped consuming it.
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
+	cmd, cleanup, err := o.Command(processCtx, req.CWD, req.WorkspaceRoot, req.Permission, node, "--max-old-space-size=512", "--no-warnings", "-e", runtimeSource)
 	if err != nil {
 		result.Error = err.Error()
 		return
@@ -288,6 +293,8 @@ func (r *Run) drive(ctx context.Context, o Options, req Request, node string) {
 	scan := bufio.NewScanner(reader)
 	scan.Buffer(make([]byte, 65536), 8<<20)
 	gotResult := false
+	var transportErr error
+transport:
 	for scan.Scan() {
 		var msg struct {
 			Type    string       `json:"type"`
@@ -298,9 +305,8 @@ func (r *Run) drive(ctx context.Context, o Options, req Request, node string) {
 			Result  Result       `json:"result"`
 		}
 		if err = json.Unmarshal(scan.Bytes(), &msg); err != nil {
-			result.Error = "invalid workflow process frame"
-			r.cancel()
-			break
+			transportErr = errors.New("invalid workflow process frame")
+			break transport
 		}
 		switch msg.Type {
 		case "phase":
@@ -309,9 +315,8 @@ func (r *Run) drive(ctx context.Context, o Options, req Request, node string) {
 			r.emit(Event{Type: "log", Message: msg.Message})
 		case "agent":
 			if msg.ID <= 0 || msg.Request.Seq != msg.ID || msg.Request.Prompt == "" {
-				result.Error = "invalid workflow child request"
-				r.cancel()
-				break
+				transportErr = errors.New("invalid workflow child request")
+				break transport
 			}
 			result.AgentsStarted++
 			children.Add(1)
@@ -339,18 +344,27 @@ func (r *Run) drive(ctx context.Context, o Options, req Request, node string) {
 			result = msg.Result
 			gotResult = true
 		default:
-			result.Error = "invalid workflow process frame type"
-			r.cancel()
+			transportErr = errors.New("invalid workflow process frame type")
+			break transport
 		}
 	}
+	if scan.Err() != nil {
+		transportErr = scan.Err()
+	}
+	// Stop before joining either the guest or child callbacks: an unconsumed
+	// guest frame and a callback reply can otherwise each block the other side.
+	stopProcess()
+	_ = reader.Close()
 	cancelChildren()
 	children.Wait()
 	stdin.Close()
 	err = cmd.Wait()
-	if !gotResult {
-		if scan.Err() != nil {
-			result.Error = "workflow transport: " + scan.Err().Error()
-		} else if err != nil {
+	if transportErr != nil {
+		result.StopReason = "error"
+		result.Value = nil
+		result.Error = "workflow transport: " + transportErr.Error()
+	} else if !gotResult {
+		if err != nil {
 			result.Error = "workflow process: " + err.Error()
 			if s := logs.String(); s != "" {
 				result.Error += " " + s

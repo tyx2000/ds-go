@@ -15,6 +15,23 @@ type inboxEntry struct {
 
 var ErrBusy = errors.New("already has a running turn")
 
+// WaitIdle waits for the currently published turn's complete cleanup. It does
+// not create work and does not wait for unrelated sessions.
+func (e *Engine) WaitIdle(ctx context.Context, id string) error {
+	e.mu.Lock()
+	done := e.idle[id]
+	e.mu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // ContinueInbox is a managed wake-up for messages racing a turn's final
 // boundary. It waits for the owner instead of starting overlapping turns.
 func (e *Engine) ContinueInbox(ctx context.Context, id string) error {

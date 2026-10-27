@@ -91,3 +91,21 @@ func TestOfficialReadStreamingWindowAndCaps(t *testing.T) {
 		t.Fatalf("missing continuation: %s", text)
 	}
 }
+
+func TestOfficialReadAcceptsEquivalentIntegralJSONNumbers(t *testing.T) {
+	r := New()
+	defer r.Close()
+	tc := toolContext(t)
+	os.WriteFile(filepath.Join(tc.CWD, "text"), []byte("one\ntwo\n"), 0600)
+	for _, raw := range []string{`{"file_path":"text","offset":1.0,"limit":1e0}`, `{"file_path":"text","offset":2e0,"limit":1.000}`} {
+		if _, err := r.Execute(context.Background(), tc, "read", json.RawMessage(raw)); err != nil {
+			t.Fatalf("valid integral number rejected: %s: %v", raw, err)
+		}
+	}
+	for _, value := range []string{"0", "-1", "1.5", "null", "\"1\""} {
+		raw := `{"file_path":"text","offset":` + value + `}`
+		if _, err := r.Execute(context.Background(), tc, "read", json.RawMessage(raw)); err == nil {
+			t.Fatalf("nonpositive/nonintegral offset accepted: %s", raw)
+		}
+	}
+}

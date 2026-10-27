@@ -79,7 +79,8 @@ func (r *Registry) SetSpillDir(dir string) {
 }
 
 // streamCapture keeps the tail of one stream in memory and, after the first
-// overflow, the complete stream up to the spill cap in a private file.
+// overflow, the complete stream in a private file. Crossing the spill cap
+// revokes that file rather than advertising a prefix as complete output.
 type streamCapture struct {
 	mu        sync.Mutex
 	dir       string
@@ -94,6 +95,12 @@ type streamCapture struct {
 func (s *streamCapture) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if int64(len(p)) > standardSpillBytes-s.total {
+		// The public spillPath means every byte is recoverable. Once the
+		// bounded file cannot provide that guarantee, remove it and keep only
+		// the ordinary in-memory tail. Never reopen it for this stream.
+		s.dropSpill()
+	}
 	if s.spill == nil && !s.failed && s.total+int64(len(p)) > standardStreamBytes {
 		// Before the first overflow the tail still holds every byte written.
 		s.openSpill()
@@ -132,8 +139,12 @@ func (s *streamCapture) openSpill() {
 }
 
 func (s *streamCapture) dropSpill() {
-	_ = s.spill.Close()
-	_ = os.Remove(s.spillPath)
+	if s.spill != nil {
+		_ = s.spill.Close()
+	}
+	if s.spillPath != "" {
+		_ = os.Remove(s.spillPath)
+	}
 	s.spill, s.spillPath, s.failed = nil, "", true
 }
 
@@ -141,7 +152,14 @@ func (s *streamCapture) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.spill != nil {
-		_ = s.spill.Close()
+		if err := s.spill.Sync(); err != nil {
+			s.dropSpill()
+			return
+		}
+		if err := s.spill.Close(); err != nil {
+			s.dropSpill()
+			return
+		}
 		s.spill = nil
 	}
 }

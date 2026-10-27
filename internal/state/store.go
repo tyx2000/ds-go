@@ -508,6 +508,16 @@ func (s *Store) Messages(id string) ([]core.Message, error) {
 }
 
 func (s *Store) Fork(id string, throughSeq int64) (child core.Session, err error) {
+	return s.fork(id, throughSeq, false)
+}
+
+// ForkCompleted is the delegated-fork seed: only the prefix ending at the last
+// settled turn is inherited. Unlike Fork(id, 0), an empty prefix means empty.
+func (s *Store) ForkCompleted(id string) (child core.Session, err error) {
+	return s.fork(id, 0, true)
+}
+
+func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child core.Session, err error) {
 	err = s.withLock(func() error {
 		parent, err := s.get(id)
 		if err != nil {
@@ -520,7 +530,15 @@ func (s *Store) Fork(id string, throughSeq int64) (child core.Session, err error
 		if throughSeq < 0 || throughSeq > int64(len(events)) {
 			return errors.New("fork sequence is out of range")
 		}
-		if throughSeq > 0 {
+		if completedOnly {
+			last := 0
+			for i, event := range events {
+				if event.Type == "turn/finished" {
+					last = i + 1
+				}
+			}
+			events = events[:last]
+		} else if throughSeq > 0 {
 			events = events[:throughSeq]
 		}
 		child, err = s.create(parent.CWD, parent.Title+" (fork)")

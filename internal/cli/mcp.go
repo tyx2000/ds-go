@@ -47,7 +47,8 @@ func (a *App) connectMCP() error {
 				if err != nil && len(result.Content) == 0 {
 					return core.ToolResult{}, err
 				}
-				return core.ToolResult{Content: projectMCP(result), IsError: result.IsError || err != nil}, nil
+				result.IsError = result.IsError || err != nil
+				return a.projectMCPResult(ctx, tc, rawName, result), nil
 			}); err != nil {
 				return err
 			}

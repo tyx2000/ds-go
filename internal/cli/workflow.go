@@ -149,8 +149,15 @@ func (a *App) workflowChild(ctx context.Context, parentID string, req workflow.C
 		prompt += "\n\nReturn only one JSON object matching this output schema, without Markdown fences:\n" + string(req.Schema)
 	}
 	err = a.engine.Run(ctx, session.ID, core.TextMessage("user", prompt))
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cleanupCancel()
+	if cleanupErr := a.disposeOwner(cleanupCtx, session.ID); cleanupErr != nil {
+		return workflow.ChildResult{}, errors.Join(err, cleanupErr)
+	}
 	if a.manager != nil {
-		a.manager.cancelChildren(session.ID)
+		if drainErr := a.manager.cancelAndDrain(cleanupCtx, session.ID); drainErr != nil {
+			return workflow.ChildResult{}, errors.Join(err, drainErr)
+		}
 	}
 	if a.registry != nil {
 		a.registry.InvalidateSession(session.ID)
@@ -185,6 +192,26 @@ func (a *App) workflowChild(ctx context.Context, parentID string, req workflow.C
 		result.Structured = structured
 	}
 	return result, nil
+}
+
+// disposeOwner quiesces resources owned by one completed session without
+// touching its enclosing workflow, unrelated sessions or the application.
+func (a *App) disposeOwner(ctx context.Context, id string) error {
+	if a.manager != nil {
+		a.manager.pauseWakes(id)
+	}
+	if a.workflows != nil {
+		if err := a.workflows.CancelOwner(ctx, id); err != nil {
+			return err
+		}
+	}
+	if a.registry != nil {
+		if err := a.registry.CancelSessionJobs(ctx, id); err != nil {
+			return err
+		}
+		a.registry.InvalidateSession(id)
+	}
+	return nil
 }
 
 // workflowJobs delegates shell jobs to the built-in registry and merges workflow jobs.

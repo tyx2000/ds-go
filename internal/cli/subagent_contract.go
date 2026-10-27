@@ -563,28 +563,43 @@ func (m *agents) deliver(ctx context.Context, target string, message core.Messag
 		}
 		// Committing under mu orders this against the child's end-of-turn check.
 		id, err := m.app.engine.Inbox(ctx, target, message)
-		if err == nil && c.Status != "running" && !full {
+		if err == nil && c.Status != "running" && !full && !(settlement && (c.torndown || m.wakePaused[target])) {
 			m.resumeLocked(c, nil)
 		}
 		return id, err
 	}
+	if m.wakePaused[target] {
+		defer m.mu.Unlock()
+		return m.app.engine.Inbox(ctx, target, message)
+	}
+	wakeCtx, wakeCancel := context.WithCancel(m.app.ctx)
+	m.nextWake++
+	wakeID := m.nextWake
+	m.wakeRuns[wakeID] = &parentWake{target: target, cancel: wakeCancel}
 	m.waking++
+	m.wakeWG.Add(1)
 	m.mu.Unlock()
 	id, err := m.app.engine.Inbox(ctx, target, message)
 	if err != nil {
+		wakeCancel()
 		m.mu.Lock()
 		m.waking--
+		delete(m.wakeRuns, wakeID)
 		m.mu.Unlock()
+		m.wakeWG.Done()
 		return "", err
 	}
 	go func() {
+		defer m.wakeWG.Done()
+		defer wakeCancel()
 		defer func() {
 			m.mu.Lock()
 			m.waking--
+			delete(m.wakeRuns, wakeID)
 			m.mu.Unlock()
 		}()
 		// A busy Session admits the message itself; an idle one is woken.
-		if err := m.app.engine.ContinueInbox(m.app.ctx, target); err != nil && !errors.Is(err, context.Canceled) {
+		if err := m.app.engine.ContinueInbox(wakeCtx, target); err != nil && !errors.Is(err, context.Canceled) {
 			m.app.line("[agent %s could not continue: %s]\n", target, clean(err.Error()))
 		}
 	}()

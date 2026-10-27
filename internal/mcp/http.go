@@ -24,6 +24,7 @@ type httpTransport struct {
 	client    *http.Client
 	mu        sync.Mutex
 	sessionID string
+	protocol  string
 }
 
 func newHTTP(endpoint string, headers map[string]string) (*httpTransport, error) {
@@ -248,6 +249,7 @@ func readSSE(reader io.Reader, emit func([]byte) error) error {
 func (h *httpTransport) close() error {
 	h.mu.Lock()
 	session := h.sessionID
+	protocol := h.protocol
 	h.mu.Unlock()
 	if session == "" {
 		h.client.CloseIdleConnections()
@@ -264,7 +266,10 @@ func (h *httpTransport) close() error {
 		req.Header.Set(key, value)
 	}
 	req.Header.Set("Mcp-Session-Id", session)
-	req.Header.Set("MCP-Protocol-Version", ProtocolVersion)
+	if protocol == "" {
+		protocol = ProtocolVersion
+	}
+	req.Header.Set("MCP-Protocol-Version", protocol)
 	res, err := h.client.Do(req)
 	h.client.CloseIdleConnections()
 	if err != nil {

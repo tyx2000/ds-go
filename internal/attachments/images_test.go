@@ -13,6 +13,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -97,6 +98,53 @@ func TestSaveImageLimitsAndFullDecodeBeforePublication(t *testing.T) {
 	cancel()
 	if _, err := s.SaveImage(ctx, fixturePNG(t, 2, 2, false), "image/png", "cancel.png"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
+	}
+}
+
+func TestSaveImagesPreflightPublishesOnlyCompleteValidBatch(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := ImageInput{Data: fixturePNG(t, 3, 4, false), MediaType: "image/png", Name: "valid.png"}
+	assertEmpty := func() {
+		t.Helper()
+		entries, err := os.ReadDir(store.path)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("invalid batch published an earlier image: entries=%v err=%v", entries, err)
+		}
+	}
+	if _, err = store.SaveImages(context.Background(), []ImageInput{valid, {Data: []byte("broken"), MediaType: "image/png"}}); err == nil {
+		t.Fatal("invalid second image was admitted")
+	}
+	assertEmpty()
+	tooMany := make([]ImageInput, MaxImagesPerMessage+1)
+	for i := range tooMany {
+		tooMany[i] = valid
+	}
+	if _, err = store.SaveImages(context.Background(), tooMany); err == nil {
+		t.Fatal("image-count limit was not enforced")
+	}
+	assertEmpty()
+	large := make([]byte, 11<<20)
+	tooLarge := make([]ImageInput, 20)
+	for i := range tooLarge {
+		tooLarge[i] = ImageInput{Data: large, MediaType: "image/png"}
+	}
+	_, err = store.SaveImages(context.Background(), tooLarge)
+	var refusal *ImageError
+	if !errors.As(err, &refusal) || refusal.Code != "MESSAGE_IMAGES_TOO_LARGE" {
+		t.Fatalf("aggregate bound must run before any decoding: %v", err)
+	}
+	assertEmpty()
+	refs, err := store.SaveImages(context.Background(), []ImageInput{valid, valid})
+	if err != nil || len(refs) != 2 || refs[0].AttachmentID == "" || refs[0].AttachmentID != refs[1].AttachmentID || refs[0].Name != "valid.png" {
+		t.Fatalf("valid ordered batch failed: %#v %v", refs, err)
+	}
+	for _, ref := range refs {
+		if _, err = store.Read(strings.TrimPrefix(ref.AttachmentID, "sha256:")); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -196,6 +244,75 @@ func TestImageNormalizationTransparentGIFUsesWebP(t *testing.T) {
 	staticBytes, _ := s.Read(strings.TrimPrefix(staticRef.AttachmentID, "sha256:"))
 	if bytes.Contains(staticBytes, []byte("ANMF")) {
 		t.Fatal("animation remained in normalized storage")
+	}
+}
+
+func TestGIFFirstFramePreservesLogicalCanvasAndOffset(t *testing.T) {
+	palette := color.Palette{color.NRGBA{255, 255, 255, 255}, color.NRGBA{255, 0, 0, 255}}
+	frame := image.NewPaletted(image.Rect(2, 3, 10, 9), palette)
+	for i := range frame.Pix {
+		frame.Pix[i] = 1
+	}
+	var encoded bytes.Buffer
+	if err := gif.EncodeAll(&encoded, &gif.GIF{Image: []*image.Paletted{frame}, Delay: []int{0}, BackgroundIndex: 0, Config: image.Config{ColorModel: palette, Width: 12, Height: 12}}); err != nil {
+		t.Fatal(err)
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(encoded.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raster, err := decodeRaster(encoded.Bytes(), "gif", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raster.Bounds() != image.Rect(0, 0, 12, 12) {
+		t.Fatalf("GIF logical canvas was lost: %v", raster.Bounds())
+	}
+	if got := color.NRGBAModel.Convert(raster.At(0, 0)).(color.NRGBA); got != (color.NRGBA{255, 255, 255, 255}) {
+		t.Fatalf("background changed: %v", got)
+	}
+	if got := color.NRGBAModel.Convert(raster.At(2, 3)).(color.NRGBA); got != (color.NRGBA{255, 0, 0, 255}) {
+		t.Fatalf("frame offset changed: %v", got)
+	}
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.SaveImage(context.Background(), encoded.Bytes(), "image/gif", "offset.gif")
+	if err != nil || ref.Width != 12 || ref.Height != 12 {
+		t.Fatalf("durable GIF dimensions: %#v %v", ref, err)
+	}
+}
+
+func TestGIFFirstFramePreservesTransparentCanvas(t *testing.T) {
+	palette := color.Palette{color.NRGBA{0, 0, 0, 0}, color.NRGBA{255, 0, 0, 255}}
+	frame := image.NewPaletted(image.Rect(2, 3, 10, 9), palette)
+	for i := range frame.Pix {
+		frame.Pix[i] = 1
+	}
+	frame.SetColorIndex(3, 4, 0)
+	var encoded bytes.Buffer
+	if err := gif.EncodeAll(&encoded, &gif.GIF{Image: []*image.Paletted{frame}, Delay: []int{0}, Config: image.Config{ColorModel: palette, Width: 12, Height: 12}}); err != nil {
+		t.Fatal(err)
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(encoded.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raster, err := decodeRaster(encoded.Bytes(), "gif", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raster.Bounds() != image.Rect(0, 0, 12, 12) {
+		t.Fatalf("logical bounds: %v", raster.Bounds())
+	}
+	for _, point := range []image.Point{{0, 0}, {3, 4}, {11, 11}} {
+		if _, _, _, alpha := raster.At(point.X, point.Y).RGBA(); alpha != 0 {
+			t.Fatalf("transparent canvas/pixel flattened at %v", point)
+		}
+	}
+	if got := color.NRGBAModel.Convert(raster.At(2, 3)).(color.NRGBA); got != (color.NRGBA{255, 0, 0, 255}) {
+		t.Fatalf("offset content changed: %v", got)
 	}
 }
 

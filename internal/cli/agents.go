@@ -39,21 +39,37 @@ type childOutcome struct {
 	status   string
 	err      string
 }
+type spawnReservation struct {
+	parent string
+	done   chan struct{}
+	cancel context.CancelFunc
+}
+type parentWake struct {
+	target string
+	cancel context.CancelFunc
+}
 type agents struct {
-	app      *App
-	mu       sync.Mutex
-	children map[string]*child
-	closing  bool
-	max      int
-	active   int // running agents and session creations that have reserved a slot
-	starting map[string]uint64
-	wg       sync.WaitGroup
-	seq      uint64
-	waking   int // settlement notices and wake-up turns still in flight
+	app             *App
+	mu              sync.Mutex
+	children        map[string]*child
+	closing         bool
+	max             int
+	active          int // running agents and session creations that have reserved a slot
+	starting        map[string]uint64
+	wg              sync.WaitGroup
+	seq             uint64
+	waking          int // settlement notices and wake-up turns still in flight
+	reservations    map[uint64]*spawnReservation
+	nextReservation uint64
+	draining        map[string]int
+	wakePaused      map[string]bool
+	wakeRuns        map[uint64]*parentWake
+	wakeWG          sync.WaitGroup
+	nextWake        uint64
 }
 
 func newAgents(a *App) *agents {
-	return &agents{app: a, children: map[string]*child{}, starting: map[string]uint64{}, max: 8}
+	return &agents{app: a, children: map[string]*child{}, starting: map[string]uint64{}, max: 8, reservations: map[uint64]*spawnReservation{}, draining: map[string]int{}, wakePaused: map[string]bool{}, wakeRuns: map[uint64]*parentWake{}}
 }
 func (m *agents) close() {
 	m.mu.Lock()
@@ -62,10 +78,105 @@ func (m *agents) close() {
 		c.cancel()
 		c.queue = nil
 	}
+	for _, reservation := range m.reservations {
+		reservation.cancel()
+	}
+	for _, wake := range m.wakeRuns {
+		wake.cancel()
+	}
 	m.mu.Unlock()
 	// All Add calls happen under mu before observing closing. This also waits
 	// for an in-flight spawn to release its reservation without publishing work.
 	m.wg.Wait()
+	m.wakeWG.Wait()
+}
+
+func (m *agents) pauseWakes(parent string) {
+	m.mu.Lock()
+	m.wakePaused[parent] = true
+	for _, wake := range m.wakeRuns {
+		if m.belongsLocked(wake.target, parent) {
+			wake.cancel()
+		}
+	}
+	m.mu.Unlock()
+}
+func (m *agents) resumeWakes(parent string) { m.mu.Lock(); delete(m.wakePaused, parent); m.mu.Unlock() }
+
+// belongsLocked follows immutable published lineage. The root itself need not
+// be a manager child (workflow members are direct Engine sessions).
+func (m *agents) belongsLocked(id, root string) bool {
+	for id != "" {
+		if id == root {
+			return true
+		}
+		c := m.children[id]
+		if c == nil {
+			return false
+		}
+		id = c.ParentID
+	}
+	return false
+}
+func (m *agents) isDrainingLocked(id string) bool {
+	for root, count := range m.draining {
+		if count > 0 && m.belongsLocked(id, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelAndDrain owns precisely this subtree, including starts not yet
+// published. Blocking new starts before taking the snapshot closes the
+// cancellation/publication race without waiting for unrelated manager work.
+func (m *agents) cancelAndDrain(ctx context.Context, parent string) error {
+	m.mu.Lock()
+	m.draining[parent]++
+	m.starting[parent]++
+	ids := m.descendantsLocked(parent)
+	waits := make([]<-chan struct{}, 0, len(ids)+len(m.reservations))
+	for _, id := range ids {
+		c := m.children[id]
+		m.starting[id]++
+		c.torndown = true
+		c.queue = nil
+		c.cancel()
+		waits = append(waits, c.outcome.done)
+	}
+	for _, reservation := range m.reservations {
+		if m.belongsLocked(reservation.parent, parent) {
+			reservation.cancel()
+			waits = append(waits, reservation.done)
+		}
+	}
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.draining[parent]--
+		if m.draining[parent] == 0 {
+			delete(m.draining, parent)
+		}
+		m.mu.Unlock()
+	}()
+	for _, id := range ids {
+		if m.app.registry != nil {
+			m.app.registry.InvalidateSession(id)
+		}
+	}
+	for _, done := range waits {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	for _, id := range ids {
+		if err := m.app.disposeOwner(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (m *agents) cancelChildren(parent string) {
 	m.mu.Lock()
@@ -163,10 +274,16 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	if mode != "" && mode != "fresh" && mode != "fork" {
 		return "", errors.New("subagent mode must be fresh or fork")
 	}
+	callCtx, reservationCancel := context.WithCancel(callCtx)
+	defer reservationCancel()
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return "", errors.New("agent manager closing")
+	}
+	if m.isDrainingLocked(parent) {
+		m.mu.Unlock()
+		return "", errors.New("subagent subtree is being disposed")
 	}
 	if m.active >= m.max {
 		m.mu.Unlock()
@@ -175,9 +292,19 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	generation := m.starting[parent]
 	m.active++
 	m.wg.Add(1)
+	m.nextReservation++
+	reservationID := m.nextReservation
+	reservation := &spawnReservation{parent: parent, done: make(chan struct{}), cancel: reservationCancel}
+	m.reservations[reservationID] = reservation
 	m.mu.Unlock()
 	published := false
 	defer func() {
+		m.mu.Lock()
+		if _, exists := m.reservations[reservationID]; exists {
+			delete(m.reservations, reservationID)
+			close(reservation.done)
+		}
+		m.mu.Unlock()
 		if !published {
 			m.mu.Lock()
 			m.active--
@@ -191,7 +318,7 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	}
 	var s core.Session
 	if mode == "fork" {
-		s, err = m.app.store.Fork(parent, 0)
+		s, err = m.app.store.ForkCompleted(parent)
 	} else {
 		s, err = m.app.store.CreateChild(p.CWD, label, parent)
 	}
@@ -232,6 +359,8 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	c.seq = m.seq
 	m.children[s.ID] = c
 	published = true
+	delete(m.reservations, reservationID)
+	close(reservation.done)
 	m.mu.Unlock()
 	go m.run(ctx, c, &input, outcome, cancel)
 	return s.ID, nil
@@ -316,6 +445,7 @@ func (m *agents) run(ctx context.Context, c *child, input *core.Message, outcome
 
 // resumeLocked restarts an idle child; the caller holds mu and checked capacity.
 func (m *agents) resumeLocked(c *child, input *core.Message) {
+	delete(m.wakePaused, c.ID)
 	childCtx, cancel := context.WithCancel(m.app.ctx)
 	c.cancel = cancel
 	c.done = make(chan struct{})

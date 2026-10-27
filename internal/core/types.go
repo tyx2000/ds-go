@@ -110,10 +110,11 @@ type Session struct {
 }
 
 type ToolResult struct {
-	Content string  `json:"content"`
-	Blocks  []Block `json:"blocks,omitempty"`
-	Meta    any     `json:"meta,omitempty"`
-	IsError bool    `json:"is_error,omitempty"`
+	Value   json.RawMessage `json:"-"` // execution-local canonical value; never persist inline media payloads
+	Content string          `json:"content"`
+	Blocks  []Block         `json:"blocks,omitempty"`
+	Meta    any             `json:"meta,omitempty"`
+	IsError bool            `json:"is_error,omitempty"`
 }
 
 type Approval struct {

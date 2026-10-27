@@ -10,14 +10,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 
 	"dsgo/internal/agent"
 	"dsgo/internal/attachments"
@@ -82,6 +80,10 @@ type App struct {
 	streamKinds     sync.Map
 	workflows       *workflow.Engine
 	workflowNotices workflowJobNotices
+	signalMu        sync.Mutex
+	signalRefs      int
+	signalStop      func()
+	foreground      sync.Map // session id -> *foregroundTurn
 }
 
 type inputLine struct {
@@ -311,6 +313,8 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 0
 	}
 	if command == "run" {
+		stopSignals := a.acquireSignals()
+		defer stopSignals()
 		prompt := strings.Join(args, " ")
 		if prompt == "" {
 			b, x := io.ReadAll(io.LimitReader(a.in, 4<<20+1))
@@ -550,19 +554,37 @@ func (a *App) readLine(ctx context.Context) (string, error) {
 }
 
 func (a *App) turn(prompt string) error {
+	stopSignals := a.acquireSignals()
+	defer stopSignals()
+	if a.manager != nil {
+		a.manager.resumeWakes(a.session.ID)
+	}
 	input := core.TextMessage("user", prompt)
 	input.Content = append(input.Content, a.attachments...)
-	a.attachments = nil
+	input.DeliveryID = "input:" + agent.ID()
 	ctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
-	interrupt := make(chan os.Signal, 2)
-	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(interrupt)
+	owner := &foregroundTurn{cancel: cancel}
+	a.foreground.Store(a.session.ID, owner)
+	defer a.foreground.CompareAndDelete(a.session.ID, owner)
 	done := make(chan error, 1)
 	go func() { done <- a.engine.Run(ctx, a.session.ID, input) }()
 	for {
 		select {
 		case err := <-done:
+			if errors.Is(err, agent.ErrBusy) {
+				// Another automatic owner may have won the admission race. The
+				// full user input is committed before the composer clears media.
+				if _, queueErr := a.manager.deliver(ctx, a.session.ID, input, false); queueErr != nil {
+					return queueErr
+				}
+				a.attachments = nil
+				a.line("\n[Message queued for the active session]\n")
+				return nil
+			}
+			if a.inputAdmitted(a.session.ID, input.DeliveryID) {
+				a.attachments = nil
+			}
 			if err != nil {
 				return err
 			}
@@ -578,18 +600,29 @@ func (a *App) turn(prompt string) error {
 			}
 			a.line("\n[Continuing active goal]\n")
 			go func() { done <- a.engine.Run(ctx, a.session.ID, core.TextMessage("user", continuation)) }()
-		case sig := <-interrupt:
-			cancel()
-			a.manager.cancelChildren(a.session.ID)
-			a.line("\nCancelling…\n")
-			if sig == syscall.SIGTERM {
-				a.cancel()
-			}
 		}
 	}
 }
 
+func (a *App) inputAdmitted(id, delivery string) bool {
+	events, err := a.store.Events(id)
+	if err != nil {
+		return false
+	}
+	for _, event := range events {
+		if event.Type == "user/message" {
+			var message core.Message
+			if json.Unmarshal(event.Data, &message) == nil && message.DeliveryID == delivery {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) chat() error {
+	stopSignals := a.acquireSignals()
+	defer stopSignals()
 	a.line("dsgo %s · %s · %s\nWorkspace: %s\nSession: %s\n/help commands · Ctrl+C cancel turn · /quit exit\n", Version, clean(a.session.Model), clean(a.session.Permission), clean(a.session.CWD), a.session.ID)
 	if a.session.Provider == "deepseek-official" && a.cfg.APIKey == "" && len(a.cfg.Account) == 0 {
 		a.line("Set DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\n")

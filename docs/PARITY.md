@@ -1,6 +1,6 @@
 # 官方 Web 功能与 dsgo 终端移植对照
 
-更新日期：2026-10-26（Asia/Shanghai）。当前状态：**实施中，尚未达到官方 Web 完整功能对等**。本表记录已实现的 Go 行为、可复核的测试入口和剩余工作，不是完整交付报告，也不以基本聊天可运行作为验收结论。
+更新日期：2026-10-27（Asia/Shanghai）。当前状态：**实施中，尚未达到官方 Web 完整功能对等**。本表记录已实现的 Go 行为、可复核的测试入口和剩余工作，不是完整交付报告，也不以基本聊天可运行作为验收结论。
 
 ## 基线与范围
 
@@ -45,16 +45,16 @@ Web 配置中的 `desktop-product-telemetry`、`product-analytics`、`ui-sidebar
 
 | 官方功能与配置依据 | 终端入口 / 当前实现 | 状态与证据 | 尚未对齐或验证 |
 | --- | --- | --- | --- |
-| `tool-fs`、`tool-fs-search`、`fs-sandbox`、`fs-observation-policy` | `read_file`、`write_file`、`edit_file`、`list_directory`、`search_files`；`/files`、`/read` | **已实现／局部验证**。原子写、精确编辑、歧义拒绝、symlink 与读/搜索边界测试 | 原工具 schema、图像读取工具、观察新鲜度/编辑前置策略、搜索语法及排序/忽略规则未完全对齐 |
+| `tool-fs`、`tool-fs-search`、`fs-sandbox`、`fs-observation-policy` | 官方 `read`、`write`、`edit`（非 minimal 预设展示）；`list_directory`、`search_files`；`/files`、`/read`；旧 `read_file`/`write_file`/`edit_file` 只保留历史重放 | **已实现／局部验证**。原子写、精确编辑、歧义拒绝、symlink 与读/搜索边界测试；审批后在写入临界区重新校验观察版本（SCOR-001）、旧名称共用官方观察与版本保护（SCOR-002）、非普通文件以非阻塞方式打开并拒绝（SCOR-003），见 `file_regressions_test.go`、`file_open_unix_test.go` | 搜索语法及排序/忽略规则未完全对齐；进程内路径锁不能约束外部编辑器，最终依赖写入时的版本条件 |
 | `working-directory`、`tool-working-directory`、`directory-picker`、`workspace-files` | `--cwd`、会话记录的工作目录、文件列表 | **部分** | 缺少完整工作目录模型工具与工作区切换流程；目录选择、文件变更推送、工作区页面操作仍未全量映射 |
 | `sandbox*`、`approval`、`permission`、`subprocess` | `/permission`、`--permission`、一次审批；macOS Seatbelt、Linux bubblewrap | **已实现／局部验证**。拒绝/取消/审计失败不授予权限、真实 macOS 工作区写入边界测试 | Linux 真实系统集成尚待验证，Windows 受限执行未实现。这里是文件效果约束，不声称网络隔离；原策略名与全部平台后端不完全相同 |
 | `tool-bash`、`tool-pwsh`、`shell-env`、`timeout-policy` | standard/ptc/cordis 的官方 `bash`（每次全新 `bash -c`，`description`/`workdir`/`timeoutMs`/`run_in_background`/`sandbox_permissions`）；旧 `run_shell` 只保留历史重放 | **部分／局部验证**。stdout/`[stderr]`/退出标记渲染、64,000 字节尾部保留与溢出文件、超时转后台 job、外部停止原因、沙箱拒绝推断与升级审批规则有 `standard_bash_test.go` | Windows PowerShell 路径缺失；`DSH_*` 托管环境（`shell-env`）与 `tool:bash` 系统提示段未接入；拒绝推断只按 stderr 特征；主动脱离进程组的子进程清理仍有限制 |
 | `jobs`、`tool-jobs`、`job-controller`、`ui-jobs` | `job_output`、`job_list`、`job_kill`（bash、旧 Shell/PTY 与工作流 job 共用）；`/jobs` 通过旧视图观察 | **部分／局部验证**。会话所有权、消费 cursor、等待上限、`[status: …]` 渲染、已结束/取消请求结果有测试；bash 与后台工作流 job 结束时按 tool-jobs 原文通知所属会话（忙时下一步接收、空闲时唤醒），跳过被等待释放、模型自己 `job_kill` 和关闭时的结算，`dsgo run` 等通知处理完再退出，见 `TestJobNotices*`、`TestBackgroundWorkflowNoticesFollowJobRules` | 未实现 `maxConsecutiveWakes`、`completionDelivery: quiet` 和 `outputLimitBytes` 截断；旧 `run_shell` 后台 job 与 PTY 不发通知；完整实时任务面板未对齐；jobs 为进程内任务，不在重启后恢复 |
 | `minimal` 的 `pty`、`persistent-bash` / `persistent-pwsh`；`ui-sidebar-terminal` | `terminal` 工具和 `/terminal` 的 start/list/read/write/resize/kill | **部分**。真实 PTY 的输入、尺寸、所有权及取消测试 | 尚无完整前台终端面板/键盘附着；未按 `minimal` 预设重建持久 Bash 命令契约、默认 300 秒策略与 PowerShell 对应实现 |
 | `ptc-runtime`、`tools`、`ptc` 的 `tool-presentation` | `--mode ptc\|ptc-repl`、`run_code`；Node erasable TypeScript、工具绑定、每调用进程或会话内存 REPL | **已实现／局部验证**。TS/await、嵌套审批和统一 dispatcher、REPL 状态、取消清理、审计失败测试 | 不是与官方运行时逐语法/逐异常完全一致的声明；顶层 return 在两种运行时的约束、工具呈现/资源限额/所有生命周期仍需官方差分。Node 依赖是官方执行语言的承载，不是第三方 Harness 插件 |
-| `spill-local`、`spill-policy`、`tool-result-pruner` | 当前工具有输出上限及截断 | **缺失／部分** | 尚未完整实现官方可重新读取的 spill 产物、规范化结果与呈现分离和剪枝策略。单纯截断不能计作完整 spill 对等 |
-| `present`、`ui-deliverables`、`workspace-changes` | `/diff` 可查看 Git diff；回复中可输出文件位置 | **部分** | 缺少 `present` 契约、交付卡片、逐轮工作树快照与变更集；普通 `git diff` 不等于包含新增/暂存文件的官方逐轮变化记录 |
-| `attachment-local`、`file-upload`、`ui-attachment`、模型 Files | `/attach` 的文本/图片输入；内容寻址文件存储与出站引用解析 | **部分／局部验证**。`attachments/store_test.go` 验证持久引用、出站解析不改日志、校验和与 symlink 拒绝；模型 Files 上传/缓存/inline fallback 有协议测试 | 官方压缩/缩放、尺寸/token 定价、配额清理、gallery/lightbox、文档附件和全部原生句柄行为尚未齐全 |
+| `spill-local`、`spill-policy`、`tool-result-pruner` | 顶层工具结果超限时保存完整原文；`/artifacts spill ID [OFFSET] [LIMIT]` 分页恢复；bash 每流保留 64,000 字节尾部并写溢出文件 | **部分／局部验证**。所有者绑定、SHA256 校验、UTF-8 边界和审计失败行为有 `artifacts_test.go`；溢出文件超过 64 MiB 时撤销“完整输出”引用（SCOR-007） | 当前阈值为 50,000 字节近似，未按官方 12,500 token 精确计量；旧结果剪枝、图片计入和单工具输出上限前的捕获未实现 |
+| `present`、`ui-deliverables`、`workspace-changes` | `present`（1–8 个文件，记录 `deliverables/presented`）；逐轮工作区快照与 `/artifacts changes`、`/artifacts diff`；`/diff` | **部分／局部验证**。`present` 契约、逐轮快照（含新增、暂存、删除、二进制与超限文件且不运行 Git）有 `artifacts_test.go`、`cli/artifacts_test.go` | 交付卡片与文件预览联动、配额/保留/垃圾回收未实现；工作区之外的仓库文件和工具在工作区外的编辑不记录；不声称完全符合官方 Git ignore/rename 语义 |
+| `attachment-local`、`file-upload`、`ui-attachment`、模型 Files | `/attach` 的文本/图片输入；`read_image`；内容寻址文件存储与出站引用解析；请求图片变体缓存；MCP 图片耐久投影 | **部分／局部验证**。持久引用、出站解析不改日志、校验和与 symlink 拒绝；GIF 按逻辑画布合成首帧（SCOR-008）；批量图片全部通过检查后才发布引用；请求变体身份、缓存损坏重建与并发一致，见 `attachments` 包测试和 `mcp_images_test.go` | 请求图片变体尚未接入按模型路由的选择；尺寸/token 定价、配额清理、gallery/lightbox、文档附件、完整 ICC 处理未齐全 |
 
 ## 计划、目标、子代理、日程和外部资料
 
@@ -64,21 +64,21 @@ Web 配置中的 `desktop-product-telemetry`、`product-analytics`、`ui-sidebar
 | `tool-todo` | `update_todo`、`/todo` | **部分**。Todo 可持久化为会话事件 | 官方 `todo_write` schema、完整结构编辑/并行进行状态规则及独立任务面板未全量对齐；`/todo TEXT` 的简单记录不是全部 Todo UI |
 | `goal`、`goal-round-driver`、`command-goal`、`tool-goal`、`ui-goal` | `/goal` 创建/查看/暂停/继续，`update_goal` 更新已有目标，自动续轮 | **部分**。当前已具有持续执行路径，并拒绝模型自行创建/替换用户目标 | 精确 token 预算、子代理成本归属、阻塞轮次判定、预算终态/恢复和官方完整自主驱动策略未齐全；模型更新状态的约束仍需官方行为样例差分 |
 | `subagent*`、`tool-subagent*`、`ui-subagent`、子代理模型设置 | 非 minimal 预设的官方 `subagent`、`subagent_fork`、`send_message`（`agent_id`）、`interrupt_agent`、`list_agents`（children/descendants）、按需 `list_subagent_models`；`/agents`；旧 `spawn_agent`/`wait_agent` 只保留历史重放 | **已实现／局部验证**。结算通知（结束语、失败诊断）写入父会话 inbox，父忙时下一步接收、空闲时唤醒；工作中的子代理在下一步接收 `send_message`，空闲子代理续跑；`interrupt_agent` 不波及后代，级联取消不再通知；`cwd`、默认深度 1、新会话一次性采样的精确路由策略及继承；`dsgo run` 等子代理结算后再退出。见 `subagent_contract_test.go`、`agents_test.go` | catalog 只在本进程内，重启后不列出也不冷恢复旧子代理；未实现子代理的委派范围声明、深度上下文提示、`agent_preset` 选择和外部后端；交互模式下被唤醒的回合不能用 Ctrl+C 单独取消，期间用户输入会因会话忙而失败 |
-| `workflow-ptc`、`tool-workflow`、`ui-workflow-run` | 没有对应入口 | **缺失** | PTC 代码能调用子代理不等于官方工作流引擎。工作流声明、durable run 生命周期、状态节点及重放仍需实现 |
+| `workflow-ptc`、`tool-workflow`、`ui-workflow-run` | `workflow` 工具（前台/后台）；`job_*` 与 `jobs` 观察后台运行；`/workflows` 重放持久展示记录 | **部分／局部验证**。官方参数、`agent`/`parallel`/`pipeline`/`phase`/`log`、FIFO 并发与上限、致命/空值规则、无损 JSON、取消清理、持久事件和重启后标记中断有 `workflow` 与 `cli/workflow_test.go`；控制帧超限时终止进程并报错（SCOR-004）；结束前等待成员后代清理完毕（SCOR-009）；后台运行按 tool-jobs 通知 | 结构化子任务仍用“要求输出 JSON + 事后校验”代替模型原生结构化输出及其重试；后台完成沿用 dsgo job 事件格式；运行/子代理的交互导航未实现。官方本身不恢复脚本状态，不列为缺口 |
 | `schedule`、`tool-schedule`、`ui-schedule`、预设 `time-context` | 官方 `schedule_create/list/update/delete`；CLI create/update/get/history/delete；`daemon run` | **部分／局部验证**。标题、六个选择器、ISO 星期、整记录 CAS、物理删除、收据/保留/分页、归档与委派检查、跨重启和并发均有测试；CLI 验证收据先于模型结束落盘 | 同会话批量周期提醒、Host FIFO 和失败后的重试节奏尚未全量对齐；IANA 别名规范化等差异详见 [日程状态说明](../internal/schedule/README.md) |
 | `web`、`web-search-deepseek`、`web-deepseek-api`、`web-fetch-http`、`tool-web` | `web_search`、`web_fetch`；官方 Messages 搜索和公共 HTTP 抓取 | **已实现／局部验证**。协议、结构化检索、多查询合并、凭据 origin、DNS pin、重定向和 HTML 限额有测试 | 官方 direct API 模块已有，但 CLI 尚未开放全部设置开关；HTML 到 Markdown 全量排版差分、完整 charset、真实账户/API 检索验收未完成。没有添加其他搜索供应商 |
-| `mcp-resources`、官方已有 MCP 连接使用能力 | `mcp_servers` 配置；stdio / Streamable HTTP tools、resources/资源模板，统一工具审批 | **部分**。握手、分页、并发 ID、取消、资源投影和 HTTP session 生命周期有测试 | 当前协议为 2025-03-26（stdio 可回退 2024-11-05），官方首选 2026-07-28；远端 OAuth、自动重连、HTTP GET/SSE 恢复、output schema 验证及图片耐久投影未齐全。官方客户端不支持的 prompt templates/资源订阅不作为新增需求 |
+| `mcp-resources`、官方已有 MCP 连接使用能力 | `mcp_servers` 配置；stdio / Streamable HTTP tools、resources/资源模板，统一工具审批 | **部分／局部验证**。握手、分页、并发 ID、取消、资源投影和 HTTP session 生命周期有测试；协议首选 2026-07-28 并接受 2025-11-25、2025-06-18、2025-03-26、2024-11-05；输入/输出 schema 编译与 `structuredContent` 校验、内容块校验、图片经持久通道投影，见 `schema_protocol_test.go`、`mcp_images_test.go` | 远端 OAuth、自动重连、HTTP GET/SSE 恢复未实现；需要 task 执行的工具会被拒绝；音频未投影。官方客户端不支持的 prompt templates/资源订阅不作为新增需求 |
 | `skill`、`skill-filesystem`、`tool-skill`、`ui-skill` | `dsgo skills`、`/skills`、`load_skill` | **部分**。发现并读取本地 SKILL.md | 官方所有查找根、优先级、frontmatter、引用展开和选择器交互未做全量差分。没有技能安装/市场扩展能力 |
-| `repeat-tool-reminder` | 没有对应入口 | **缺失** | 官方重复调用阈值和提醒策略仍需实现；普通 max-steps 不能替代 |
+| `repeat-tool-reminder` | 引擎内置的重复调用提醒，按参数规范化后的调用计数在阈值处注入提醒 | **已实现／局部验证**。精确阈值、规范化参数、代理隔离、透明过滤及与 JavaScript JSON 规范一致有 `agent/repeat_test.go` | 提醒为建议性质、不阻止执行，与官方一致；配置项暂未暴露为终端设置 |
 
 ## 网页界面的终端承载与仍缺失交互
 
 | 官方页面/服务 | 当前终端承载 | 状态与下一步 |
 | --- | --- | --- |
-| `ui-chat`、`ui-conversation`、`ui-tool`、`ui-trajectory`、会话统计/turn outline | 流式文本、工具启动/完成记录、JSON 事件、`/history`、`sessions show` | **部分**。缺完整工具调用树、turn/step 导航、实时统计和轨迹浏览；原始事件可读不等于已具有对应导航交互 |
+| `ui-chat`、`ui-conversation`、`ui-tool`、`ui-trajectory`、会话统计/turn outline | 流式文本、工具启动/完成记录、JSON 事件、`/history`、`sessions show`；`/trajectory` 全屏轨迹浏览（turn 导航、记录检查、搜索、统计、纯文本与 `--json`） | **部分／局部验证**。投影、计数、失败/部分/恢复记录、PTC 并发配对、控制序列过滤、CJK 换行和真实 PTY 退出恢复有 `tui` 测试 | 主聊天仍是行输入；图形化时间轴缩放、图片 lightbox、JSON 树折叠、代码高亮/复制和旧历史分页加载未实现 |
 | `ui-sidebar-files`、`workspace-files`、`ui-workspace`、`workspace-controller` | `/files`、`/read`、`--cwd` | **部分**。缺完整工作区/项目页面、目录选择与切换、文件树刷新/打开操作、会话引用和文件引用选择器 |
-| `ui-sidebar-documentpreview`：Markdown、代码、纯文本 | `/read` 展示文本 | **部分**。代码/Markdown 的终端预览、选择/搜索/位置导航及与文件树联动仍需有限功能设计和验收 |
-| 同一预览：HTML、PDF、Office、表格、图片；`office-to-pdf` | 当前没有完整对应视图 | **缺失且仍在需求范围内**。可执行 HTML、PDF 页/缩放/文字选择、Office 转换、表格公式/样式/合并/冻结、图片缩放/gallery 等不能用文本摘要或路径自动计作对等。外部查看器也尚未获约定为完整终端交付方式 |
+| `ui-sidebar-documentpreview`：Markdown、代码、纯文本 | `/read`；`/preview PATH [JSON]` 的分页、搜索和行定位 | **部分／局部验证**。文本分页、编码识别、搜索和取消有 `preview_test.go` | Markdown 仍主要显示源码；选择、与文件树联动尚未实现 |
+| 同一预览：HTML、PDF、Office、表格、图片；`office-to-pdf` | `/preview`：Kitty/iTerm2 位图、HTML 截图与本地资源打包、PDF/Office 外部渲染接口、XLSX/CSV/TSV 解析 | **部分且仍在需求范围内**。HTML 静态/交互沙箱、资源打包、表格关系/公式/合并/冻结/样式读取、CSV 与资源上限有 `preview_test.go` | HTML 截图不能交互；PDF 缺与页面联动的文字选择；Office 未对齐官方 kit/字体诊断；XLS 不支持；表格未实现完整样式/冻结交互；本机缺 Poppler/LibreOffice，PDF/Office 路径未实际验收 |
 | `ui-attachment`、`resources`、`ui-reference`、`session-reference`、`file-reference-local` | `/attach`、MCP 资源文字投影、文件路径 | **部分**。缺统一资源导航、拖放的键盘对应操作、会话/文件 `@` 选择与引用生命周期；MCP 图片/音频目前有明确缺口提示 |
 | `ui-settings*`、`settings-controller`、`config-editor` | `dsgo config`、模型/权限命令 | **部分**。只暴露 Go 当前配置字段；General、Shell、Agent Loop、Subagent、Web Search、Session Log 的官方可用设置必须逐项补齐，不能因页面位于“内置插件”分组而排除 |
 | `ui-agent-preset`、`agent-preset-registry` | `--mode native\|ptc\|ptc-repl` | **部分**。尚无与官方四个已保存预设相同的选择、默认值、persona/工具组合与每会话隔离；`minimal` 尤其不能用普通 native 模式代替；`cordis` 的扩展创作部分按用户范围单独排除 |

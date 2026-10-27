@@ -187,6 +187,29 @@ func TestWorkflowCancellationDrainsChildrenAndPairsEvents(t *testing.T) {
 	r.Dispose()
 	r.Dispose()
 }
+
+func TestWorkflowOversizedFramesFailAndReleaseProcess(t *testing.T) {
+	for _, script := range []string{`return 'x'.repeat(9*1024*1024);`, `log('x'.repeat(9*1024*1024));return null;`} {
+		t.Run(script[:min(12, len(script))], func(t *testing.T) {
+			e := testEngine(t, func(context.Context, string, ChildRequest, func(string)) (ChildResult, error) {
+				t.Error("oversized frame unexpectedly dispatched a child")
+				return ChildResult{}, nil
+			})
+			r := startFixture(t, e, script)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			value, err := r.Wait(ctx)
+			if err != nil {
+				r.Cancel("test cleanup")
+				t.Fatalf("oversized frame did not settle without external cancellation: %v", err)
+			}
+			if value.StopReason != "error" || !strings.Contains(value.Error, "workflow transport:") {
+				t.Fatalf("transport fault misclassified: %+v", value)
+			}
+			e.Close()
+		})
+	}
+}
 func TestWorkflowCapsAndSynchronousTimeout(t *testing.T) {
 	e := testEngine(t, func(ctx context.Context, parent string, req ChildRequest, publish func(string)) (ChildResult, error) {
 		publish("child")

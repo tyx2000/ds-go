@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +46,7 @@ func (r *Registry) officialFiles() {
 		s core.ToolSpec
 		h Handler
 	}{
-		{spec("read", "Read a UTF-8 text file and return line-numbered content.", `{"type":"object","additionalProperties":false,"required":["file_path"],"properties":{"file_path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`), r.officialRead},
+		{spec("read", "Read a UTF-8 text file and return line-numbered content.", `{"type":"object","additionalProperties":false,"required":["file_path"],"properties":{"file_path":{"type":"string"},"offset":{"type":"number"},"limit":{"type":"number"}}}`), r.officialRead},
 		{spec("write", "Create or fully replace a UTF-8 text file. Read an existing file first; unobserved existing files cannot be overwritten.", `{"type":"object","additionalProperties":false,"required":["file_path","content"],"properties":{"file_path":{"type":"string"},"content":{"type":"string"},"sandbox_permissions":{"type":"string","enum":["workspace-write","danger-full-access"]},"justification":{"type":"string"}}}`), r.officialWrite},
 		{spec("edit", "Edit an existing UTF-8 text file by replacing literal text. Read the file first unless just created or edited in this session.", `{"type":"object","additionalProperties":false,"required":["file_path","old_string","new_string"],"properties":{"file_path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean"},"sandbox_permissions":{"type":"string","enum":["workspace-write","danger-full-access"]},"justification":{"type":"string"}}}`), r.officialEdit},
 	} {
@@ -89,7 +91,7 @@ func fileTarget(tc core.ToolContext, path string) (string, error) {
 }
 
 func fileVersion(ctx context.Context, path string) (fileObservation, error) {
-	f, err := os.Open(path)
+	f, info, err := openRegularFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return fileObservation{}, nil
 	}
@@ -97,13 +99,6 @@ func fileVersion(ctx context.Context, path string) (fileObservation, error) {
 		return fileObservation{}, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return fileObservation{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return fileObservation{}, errors.New("path is not a regular file")
-	}
 	h := sha256.New()
 	b := make([]byte, 64<<10)
 	for {
@@ -132,28 +127,28 @@ func fileVersion(ctx context.Context, path string) (fileObservation, error) {
 }
 
 func (r *Registry) officialRead(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
+	return r.readWindow(ctx, tc, raw, 2000)
+}
+
+func (r *Registry) readWindow(ctx context.Context, tc core.ToolContext, raw json.RawMessage, maxLimit int) (core.ToolResult, error) {
 	var a struct {
-		Path          string `json:"file_path"`
-		Offset, Limit *int
+		Path   string          `json:"file_path"`
+		Offset json.RawMessage `json:"offset"`
+		Limit  json.RawMessage `json:"limit"`
 	}
 	if err := decode(raw, &a); err != nil {
 		return core.ToolResult{}, err
 	}
-	offset, limit := 1, 2000
-	if a.Offset != nil {
-		offset = *a.Offset
+	offset, err := positiveReadNumber(a.Offset, "offset", 1)
+	if err != nil {
+		return core.ToolResult{}, err
 	}
-	if a.Limit != nil {
-		limit = *a.Limit
+	limit, err := positiveReadNumber(a.Limit, "limit", maxLimit)
+	if err != nil {
+		return core.ToolResult{}, err
 	}
-	if offset < 1 {
-		return core.ToolResult{}, errors.New("offset must be a positive integer")
-	}
-	if limit < 1 {
-		return core.ToolResult{}, errors.New("limit must be a positive integer")
-	}
-	if limit > 2000 {
-		return core.ToolResult{}, errors.New("limit must be less than or equal to 2000")
+	if limit > maxLimit {
+		return core.ToolResult{}, fmt.Errorf("limit must be less than or equal to %d", maxLimit)
 	}
 	path, err := fileTarget(tc, a.Path)
 	if err != nil {
@@ -165,7 +160,7 @@ func (r *Registry) officialRead(ctx context.Context, tc core.ToolContext, raw js
 	}
 	unlock := fileLock(path)
 	defer unlock()
-	f, err := os.Open(path)
+	f, info, err := openRegularFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		r.observe(tc.SessionID, path, fileObservation{})
 		return core.ToolResult{}, err
@@ -174,13 +169,6 @@ func (r *Registry) officialRead(ctx context.Context, tc core.ToolContext, raw js
 		return core.ToolResult{}, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return core.ToolResult{}, errors.New("path is not a regular file")
-	}
 	h := sha256.New()
 	reader := bufio.NewReaderSize(io.TeeReader(f, h), 64<<10)
 	value := readValue{Path: path, Offset: offset, Lines: []fileLine{}}
@@ -256,6 +244,19 @@ func (r *Registry) officialRead(ctx context.Context, tc core.ToolContext, raw js
 	return result(value), nil
 }
 
+// The official numeric input is a JavaScript number, so equivalent integral
+// JSON forms such as 1, 1.0 and 1e0 must have identical read-window semantics.
+func positiveReadNumber(raw json.RawMessage, name string, fallback int) (int, error) {
+	if len(raw) == 0 {
+		return fallback, nil
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err != nil || value < 1 || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value || value >= math.Exp2(63) || value > float64(int(^uint(0)>>1)) {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return int(value), nil
+}
+
 type fsMutationArgs struct {
 	Path          string `json:"file_path"`
 	Content       string `json:"content"`
@@ -311,13 +312,21 @@ func (r *Registry) officialMutate(ctx context.Context, tc core.ToolContext, raw 
 	if err != nil {
 		return core.ToolResult{}, err
 	}
+	// Permission resolution may wait for the user. Complete it before deriving
+	// any observation guard or file contents, then keep the opened Root as the
+	// authority for both validation and the eventual commit.
+	root, rel, err := writeRoot(ctx, tc, name, raw, path)
+	if err != nil {
+		return core.ToolResult{}, err
+	}
+	defer root.Close()
 	unlock := fileLock(path)
 	defer unlock()
-	if info, e := os.Lstat(path); e == nil && info.Mode()&os.ModeSymlink != 0 {
+	if info, e := root.Lstat(rel); e == nil && info.Mode()&os.ModeSymlink != 0 {
 		return core.ToolResult{}, errors.New("refusing to overwrite a symbolic link")
 	}
 	prior, seen := r.observed(tc.SessionID, path)
-	current, err := fileVersion(ctx, path)
+	data, current, mode, err := readSnapshotAt(ctx, root, rel)
 	if err != nil {
 		return core.ToolResult{}, err
 	}
@@ -336,11 +345,7 @@ func (r *Registry) officialMutate(ctx context.Context, tc core.ToolContext, raw 
 	}
 	var before any
 	if current.Present {
-		b, e := readText(path)
-		if e != nil {
-			return core.ToolResult{}, e
-		}
-		before = string(b)
+		before = string(data)
 	}
 	content := a.Content
 	if edit {
@@ -358,7 +363,7 @@ func (r *Registry) officialMutate(ctx context.Context, tc core.ToolContext, raw 
 		}
 		content = strings.Replace(old, a.Old, a.New, n)
 	}
-	_, err = writeFile(ctx, tc, core.JSON(map[string]any{"path": path, "content": content}))
+	err = atomicObservedWrite(ctx, root, rel, []byte(content), mode, current)
 	if err != nil {
 		return core.ToolResult{}, err
 	}
@@ -373,6 +378,110 @@ func (r *Registry) officialMutate(ctx context.Context, tc core.ToolContext, raw 
 		value["operation"] = operation
 	}
 	return result(value), nil
+}
+
+// readSnapshotAt checks the same descriptor it reads, under the already
+// approved Root. It never blocks opening a FIFO and hashes exactly the bytes
+// used for an edit, rather than re-reading through an unrelated absolute path.
+func readSnapshotAt(ctx context.Context, root *os.Root, path string) ([]byte, fileObservation, fs.FileMode, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fileObservation{}, 0, err
+	}
+	f, info, err := openRegularAt(root, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fileObservation{}, 0644, nil
+	}
+	if err != nil {
+		return nil, fileObservation{}, 0, err
+	}
+	defer f.Close()
+	if info.Size() > maxFileBytes {
+		return nil, fileObservation{}, 0, errors.New("file exceeds text mutation size limit")
+	}
+	var data []byte
+	buf := make([]byte, 64<<10)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fileObservation{}, 0, err
+		}
+		n, readErr := f.Read(buf)
+		if n > maxFileBytes-len(data) {
+			return nil, fileObservation{}, 0, errors.New("file grew beyond text mutation size limit")
+		}
+		data = append(data, buf[:n]...)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, fileObservation{}, 0, readErr
+		}
+	}
+	if !utf8.Valid(data) || strings.IndexByte(string(data), 0) >= 0 {
+		return nil, fileObservation{}, 0, errors.New("target is not UTF-8 text")
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return nil, fileObservation{}, 0, err
+	}
+	if info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
+		return nil, fileObservation{}, 0, errors.New("FS_STALE: file changed while reading; read it again")
+	}
+	sum := sha256.Sum256(data)
+	return data, fileObservation{true, hex.EncodeToString(sum[:])}, info.Mode().Perm(), nil
+}
+
+func atomicObservedWrite(ctx context.Context, root *os.Root, path string, data []byte, mode fs.FileMode, expected fileObservation) error {
+	if len(data) > maxFileBytes {
+		return errors.New("content exceeds file size limit")
+	}
+	parent := filepath.Dir(path)
+	if err := root.MkdirAll(parent, 0755); err != nil {
+		return err
+	}
+	tmp := filepath.Join(parent, ".dsgo-"+newID()+".tmp")
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if !expected.Present {
+		// Linking the staged inode is an atomic create-if-absent operation;
+		// Rename would silently clobber a file created after the absence check.
+		err = root.Link(tmp, path)
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("FS_STALE: file was created before the write committed; read it again")
+		}
+	} else {
+		_, current, _, checkErr := readSnapshotAt(ctx, root, path)
+		if checkErr != nil {
+			return checkErr
+		}
+		if current != expected {
+			return errors.New("FS_STALE: file changed before the write committed; read it again")
+		}
+		err = root.Rename(tmp, path)
+	}
+	if err != nil {
+		return err
+	}
+	dir, err := root.Open(parent)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 // RenderOfficialFileResult separates canonical tool values from model text.

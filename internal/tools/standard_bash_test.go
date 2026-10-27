@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -221,6 +222,57 @@ func TestStandardBashOutputSpillAndUTF8Reads(t *testing.T) {
 	}
 	if _, ok := RenderShellResult("bash", "hello\n[Command finished with exit code 0]"); ok {
 		t.Fatal("persistent bash text was treated as a standard value")
+	}
+}
+
+func TestStreamCaptureRevokesFullOutputAfterSpillLimit(t *testing.T) {
+	s := &streamCapture{dir: t.TempDir()}
+	defer s.close()
+	chunk := bytes.Repeat([]byte("x"), 1<<20)
+	for written := 0; written < standardSpillBytes; written += len(chunk) {
+		if n, err := s.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("write: %d %v", n, err)
+		}
+	}
+	path := s.path()
+	if path == "" {
+		t.Fatal("exactly the spill limit should retain its complete output file")
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() != standardSpillBytes {
+		t.Fatalf("complete spill size: %v %v", info, err)
+	}
+	if _, err := s.Write([]byte("END")); err != nil {
+		t.Fatal(err)
+	}
+	value := s.value()
+	if _, ok := value["spillPath"]; ok || s.path() != "" {
+		t.Fatal("partial spill must not be advertised as the full output")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial spill should be removed, got %v", err)
+	}
+	if !strings.HasSuffix(value["text"].(string), "END") || value["truncated"] != true {
+		t.Fatalf("tail must survive spill revocation: %v", value["truncated"])
+	}
+	if _, err := s.Write([]byte("still running")); err != nil || s.path() != "" {
+		t.Fatalf("over-limit streams must not reopen a spill: %v", err)
+	}
+}
+
+func TestStreamCaptureUnavailableSpillRetainsTail(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &streamCapture{dir: blocked}
+	defer s.close()
+	if n, err := s.Write(bytes.Repeat([]byte("a"), standardStreamBytes+1)); err != nil || n != standardStreamBytes+1 {
+		t.Fatalf("spill unavailability must not stop process output: %d %v", n, err)
+	}
+	value := s.value()
+	if _, ok := value["spillPath"]; ok || value["truncated"] != true || len(value["text"].(string)) != standardStreamBytes {
+		t.Fatal("unavailable spill must leave a correctly marked in-memory tail")
 	}
 }
 

@@ -28,9 +28,9 @@ func (r *Registry) builtins() {
 		h Handler
 	}{
 		{spec("bash", "Run commands in a persistent bash shell. State, including the current directory and exported environment variables, persists across calls for this agent. Commands have a 300 second deadline. Run long lived commands in the background.", `{"type":"object","required":["command"],"additionalProperties":false,"properties":{"command":{"type":"string"}}}`), r.persistentBash},
-		{spec("read_file", "Read a UTF-8 text file. offset is a zero-based line number; limit is number of lines (default 200).", `{"type":"object","required":["path"],"properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`), readFile},
-		{spec("write_file", "Atomically write a UTF-8 file. Restricted writes outside the workspace require one-time approval.", `{"type":"object","required":["path","content"],"properties":{"path":{"type":"string"},"content":{"type":"string"}}}`), writeFile},
-		{spec("edit_file", "Replace an exact text match. Ambiguous matches fail unless replace_all is true.", `{"type":"object","required":["path","old_text","new_text"],"properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"replace_all":{"type":"boolean"}}}`), editFile},
+		{spec("read_file", "Read a UTF-8 text file. offset is a zero-based line number; limit is number of lines (default 200).", `{"type":"object","required":["path"],"properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`), r.legacyRead},
+		{spec("write_file", "Atomically write a UTF-8 file. Restricted writes outside the workspace require one-time approval.", `{"type":"object","required":["path","content"],"properties":{"path":{"type":"string"},"content":{"type":"string"}}}`), r.legacyWrite},
+		{spec("edit_file", "Replace an exact text match. Ambiguous matches fail unless replace_all is true.", `{"type":"object","required":["path","old_text","new_text"],"properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"replace_all":{"type":"boolean"}}}`), r.legacyEdit},
 		{spec("list_directory", "List entries without following symlinks. Optional recursive traversal has bounded output.", `{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"boolean"},"limit":{"type":"integer"}}}`), listDirectory},
 		{spec("search_files", "Search UTF-8 files with a Go regular expression. Symlinks are not traversed; output is bounded.", `{"type":"object","required":["pattern"],"properties":{"path":{"type":"string"},"pattern":{"type":"string"},"glob":{"type":"string"},"limit":{"type":"integer"}}}`), searchFiles},
 		{spec("run_shell", "Run a shell command with the selected OS filesystem sandbox. timeout_ms defaults to 120000 (max 600000). Set background for an owner-scoped job; it is canceled when dsgo exits. sandbox full-access requires approval unless already full-access.", `{"type":"object","required":["command"],"properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"},"background":{"type":"boolean"},"sandbox":{"type":"string","enum":["read-only","workspace-write","full-access"]}}}`), r.runShell},
@@ -55,13 +55,8 @@ func absolute(tc core.ToolContext, p string) (string, error) {
 }
 
 func regularFile(path string) (*os.File, error) {
-	f, err := os.Open(path)
+	f, st, err := openRegularFile(path)
 	if err != nil {
-		return nil, err
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
 		return nil, err
 	}
 	if !st.Mode().IsRegular() {
@@ -92,60 +87,6 @@ func readText(path string) ([]byte, error) {
 		return nil, errors.New("binary or non-UTF-8 file; use an attachment/preview instead")
 	}
 	return b, nil
-}
-
-func readFile(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {
-	var a struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
-		Limit  int    `json:"limit"`
-	}
-	if err := decode(input, &a); err != nil {
-		return core.ToolResult{}, err
-	}
-	if a.Offset < 0 || a.Limit < 0 {
-		return core.ToolResult{}, errors.New("offset and limit must be nonnegative")
-	}
-	if a.Limit == 0 {
-		a.Limit = 200
-	}
-	if a.Limit > 10000 {
-		a.Limit = 10000
-	}
-	p, err := absolute(tc, a.Path)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	b, err := readText(p)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return core.ToolResult{}, err
-	}
-	lines := strings.Split(string(b), "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	end := a.Offset + a.Limit
-	if end > len(lines) {
-		end = len(lines)
-	}
-	if a.Offset > len(lines) {
-		a.Offset = len(lines)
-	}
-	var out strings.Builder
-	truncated := false
-	for i := a.Offset; i < end; i++ {
-		line := fmt.Sprintf("%6d\t%s\n", i+1, lines[i])
-		if out.Len()+len(line) > maxOutputBytes {
-			truncated = true
-			end = i
-			break
-		}
-		out.WriteString(line)
-	}
-	return result(map[string]any{"path": p, "offset": a.Offset, "next_offset": end, "total_lines": len(lines), "truncated": truncated || end < len(lines), "content": out.String()}), nil
 }
 
 func canonicalParent(path string) (string, error) {
@@ -235,126 +176,6 @@ func openAncestor(path string) (*os.Root, string, error) {
 		}
 		parent = next
 	}
-}
-
-func atomicWrite(root *os.Root, path string, b []byte, mode fs.FileMode) error {
-	if len(b) > maxFileBytes {
-		return errors.New("content exceeds file size limit")
-	}
-	parent := filepath.Dir(path)
-	if err := root.MkdirAll(parent, 0755); err != nil {
-		return err
-	}
-	tmp := filepath.Join(parent, ".dsgo-"+newID()+".tmp")
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
-		return err
-	}
-	defer root.Remove(tmp)
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return root.Rename(tmp, path)
-}
-
-func writeFile(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {
-	var a struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := decode(input, &a); err != nil {
-		return core.ToolResult{}, err
-	}
-	if a.Path == "" {
-		return core.ToolResult{}, errors.New("path is empty")
-	}
-	p, err := absolute(tc, a.Path)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	root, rel, err := writeRoot(ctx, tc, "write_file", input, p)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	defer root.Close()
-	if err := ctx.Err(); err != nil {
-		return core.ToolResult{}, err
-	}
-	mode := fs.FileMode(0644)
-	if st, e := root.Stat(rel); e == nil {
-		if !st.Mode().IsRegular() {
-			return core.ToolResult{}, errors.New("target is not a regular file")
-		}
-		mode = st.Mode().Perm()
-	}
-	if err := atomicWrite(root, rel, []byte(a.Content), mode); err != nil {
-		return core.ToolResult{}, err
-	}
-	return result(map[string]any{"path": p, "bytes": len(a.Content)}), nil
-}
-
-func editFile(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {
-	var a struct {
-		Path string `json:"path"`
-		Old  string `json:"old_text"`
-		New  string `json:"new_text"`
-		All  bool   `json:"replace_all"`
-	}
-	if err := decode(input, &a); err != nil {
-		return core.ToolResult{}, err
-	}
-	if a.Path == "" || a.Old == "" {
-		return core.ToolResult{}, errors.New("path and old_text must not be empty")
-	}
-	p, err := absolute(tc, a.Path)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	root, rel, err := writeRoot(ctx, tc, "edit_file", input, p)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	defer root.Close()
-	f, err := root.Open(rel)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if !st.Mode().IsRegular() || st.Size() > maxFileBytes {
-		return core.ToolResult{}, errors.New("target is not a bounded regular file")
-	}
-	b, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if !utf8.Valid(b) || bytes.IndexByte(b, 0) >= 0 {
-		return core.ToolResult{}, errors.New("target is not UTF-8 text")
-	}
-	n := strings.Count(string(b), a.Old)
-	if n == 0 {
-		return core.ToolResult{}, errors.New("old_text was not found; file unchanged")
-	}
-	if n > 1 && !a.All {
-		return core.ToolResult{}, fmt.Errorf("old_text matched %d times; provide unique context or replace_all", n)
-	}
-	if err := ctx.Err(); err != nil {
-		return core.ToolResult{}, err
-	}
-	updated := strings.ReplaceAll(string(b), a.Old, a.New)
-	if err := atomicWrite(root, rel, []byte(updated), st.Mode().Perm()); err != nil {
-		return core.ToolResult{}, err
-	}
-	return result(map[string]any{"path": p, "replacements": n, "bytes": len(updated)}), nil
 }
 
 func listDirectory(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {

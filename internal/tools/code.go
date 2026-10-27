@@ -222,7 +222,11 @@ func (r *Registry) runCode(ctx context.Context, tc core.ToolContext, input json.
 						reply["error"] = res.Content
 					} else {
 						var value any
-						d := json.NewDecoder(strings.NewReader(res.Content))
+						canonical := res.Content
+						if len(res.Value) > 0 {
+							canonical = string(res.Value)
+						}
+						d := json.NewDecoder(strings.NewReader(canonical))
 						d.UseNumber()
 						if d.Decode(&value) != nil {
 							value = res.Content

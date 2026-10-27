@@ -10,13 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
 	"dsgo/internal/core"
+	"dsgo/internal/jsonschema"
 )
 
 type Handler func(context.Context, core.ToolContext, json.RawMessage) (core.ToolResult, error)
@@ -253,101 +252,8 @@ func decode(input json.RawMessage, v any) error {
 	return nil
 }
 
-type schema struct {
-	AdditionalProperties json.RawMessage   `json:"additionalProperties"`
-	Type                 string            `json:"type"`
-	Required             []string          `json:"required"`
-	Properties           map[string]schema `json:"properties"`
-	Items                *schema           `json:"items"`
-	Enum                 []any             `json:"enum"`
-}
-
 func validate(raw, jsonInput []byte) error {
-	var s schema
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return err
-	}
-	var v any
-	d := json.NewDecoder(bytes.NewReader(jsonInput))
-	d.UseNumber()
-	if err := d.Decode(&v); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		return errors.New("trailing JSON data")
-	}
-	return validateValue(s, v, "arguments")
-}
-
-func validateValue(s schema, v any, path string) error {
-	ok := true
-	switch s.Type {
-	case "object":
-		_, ok = v.(map[string]any)
-	case "array":
-		_, ok = v.([]any)
-	case "string":
-		_, ok = v.(string)
-	case "boolean":
-		_, ok = v.(bool)
-	case "number":
-		_, ok = v.(json.Number)
-	case "integer":
-		n, nok := v.(json.Number)
-		ok = nok
-		if nok {
-			value, err := strconv.ParseFloat(n.String(), 64)
-			ok = err == nil && !math.IsInf(value, 0) && !math.IsNaN(value) && math.Trunc(value) == value
-		}
-	case "null":
-		ok = v == nil
-	}
-	if !ok {
-		return fmt.Errorf("%s must be %s", path, s.Type)
-	}
-	if len(s.Enum) > 0 {
-		match := false
-		for _, e := range s.Enum {
-			if fmt.Sprint(e) == fmt.Sprint(v) {
-				match = true
-			}
-		}
-		if !match {
-			return fmt.Errorf("%s has an unsupported value", path)
-		}
-	}
-	if m, ok := v.(map[string]any); ok {
-		for _, k := range s.Required {
-			if x, exists := m[k]; !exists || x == nil {
-				return fmt.Errorf("%s.%s is required", path, k)
-			}
-		}
-		for k, x := range m {
-			if sub, found := s.Properties[k]; found {
-				if err := validateValue(sub, x, path+"."+k); err != nil {
-					return err
-				}
-			} else if bytes.Equal(bytes.TrimSpace(s.AdditionalProperties), []byte("false")) {
-				return fmt.Errorf("%s.%s is not allowed", path, k)
-			} else if len(s.AdditionalProperties) > 0 && bytes.HasPrefix(bytes.TrimSpace(s.AdditionalProperties), []byte("{")) {
-				var sub schema
-				if err := json.Unmarshal(s.AdditionalProperties, &sub); err != nil {
-					return err
-				}
-				if err := validateValue(sub, x, path+"."+k); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if a, ok := v.([]any); ok && s.Items != nil {
-		for i, x := range a {
-			if err := validateValue(*s.Items, x, fmt.Sprintf("%s[%d]", path, i)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return jsonschema.Validate(raw, jsonInput)
 }
 
 func spec(name, description, raw string) core.ToolSpec {

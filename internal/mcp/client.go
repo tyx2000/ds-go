@@ -23,14 +23,16 @@ import (
 	"time"
 
 	"dsgo/internal/core"
+	"dsgo/internal/jsonschema"
 	"dsgo/internal/state"
 )
 
-const ProtocolVersion = "2025-03-26"
+const ProtocolVersion = "2026-07-28"
 const maxFrameBytes = 8 << 20
 const requestTimeout = 60 * time.Second
 
 var ErrClosed = errors.New("MCP connection closed")
+var ErrIncompleteClose = errors.New("MCP transport closure could not be confirmed")
 
 type RPCError struct {
 	Code    int             `json:"code"`
@@ -73,9 +75,12 @@ type Client struct {
 	mu            sync.Mutex
 	pending       map[string]chan response
 	terminalError error
+	outputSchemas map[string]*jsonschema.Schema
+	taskRequired  map[string]bool
 	done          chan struct{}
 	doneOnce      sync.Once
 	closeOnce     sync.Once
+	closeError    error
 	seq           atomic.Int64
 	notifications chan Notification
 	http          *httpTransport
@@ -153,26 +158,42 @@ func Open(ctx context.Context, cwd string, server state.MCPServer) (*Client, err
 	}
 	err = c.Call(ctx, "initialize", map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"roots": map[string]any{"listChanged": false}}, "clientInfo": map[string]string{"name": "dsgo", "version": "0.1.0-dev"}}, &init)
 	if err != nil {
-		c.Close()
-		return nil, err
+		return nil, closeFailedClient(c, err)
 	}
-	if init.ProtocolVersion != ProtocolVersion && !(server.URL == "" && init.ProtocolVersion == "2024-11-05") {
-		c.Close()
-		return nil, fmt.Errorf("unsupported MCP protocol version %q", init.ProtocolVersion)
+	if !supportedProtocol(init.ProtocolVersion) {
+		return nil, closeFailedClient(c, fmt.Errorf("unsupported MCP protocol version %q", init.ProtocolVersion))
 	}
 	if len([]byte(init.Instructions)) > 32768 {
-		c.Close()
-		return nil, errors.New("MCP server instructions exceed 32768 bytes")
+		return nil, closeFailedClient(c, errors.New("MCP server instructions exceed 32768 bytes"))
 	}
 	c.ProtocolVersion = init.ProtocolVersion
+	if c.http != nil {
+		c.http.mu.Lock()
+		c.http.protocol = init.ProtocolVersion
+		c.http.mu.Unlock()
+	}
 	c.Instructions = init.Instructions
 	c.Capabilities = init.Capabilities
 	c.ServerInfo = init.ServerInfo
 	if err := c.notify(ctx, "notifications/initialized", nil); err != nil {
-		c.Close()
-		return nil, err
+		return nil, closeFailedClient(c, err)
 	}
 	return c, nil
+}
+
+func closeFailedClient(c *Client, cause error) error {
+	if err := c.Close(); err != nil {
+		return errors.Join(cause, fmt.Errorf("%w: %v", ErrIncompleteClose, err))
+	}
+	return cause
+}
+
+func supportedProtocol(version string) bool {
+	switch version {
+	case ProtocolVersion, "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05":
+		return true
+	}
+	return false
 }
 
 func scrubEnvironment(overrides map[string]string) []string {
@@ -433,11 +454,10 @@ func (c *Client) handle(data []byte, reply func(wire) error) error {
 }
 
 func (c *Client) Close() error {
-	var closeErr error
 	c.closeOnce.Do(func() {
 		c.fail(ErrClosed)
 		if c.http != nil {
-			closeErr = c.http.close()
+			c.closeError = c.http.close()
 			return
 		}
 		if c.stdin != nil {
@@ -461,10 +481,10 @@ func (c *Client) Close() error {
 		select {
 		case <-c.processDone:
 		case <-time.After(time.Second):
-			closeErr = errors.New("MCP process did not exit after kill")
+			c.closeError = errors.New("MCP process did not exit after kill")
 		}
 	})
-	return closeErr
+	return c.closeError
 }
 
 type cappedLog struct {
@@ -489,37 +509,81 @@ type Tool struct {
 	Description  string          `json:"description,omitempty"`
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Execution    struct {
+		TaskSupport string `json:"taskSupport"`
+	} `json:"execution,omitempty"`
+}
+
+type discoveredTools struct {
+	specs   []core.ToolSpec
+	outputs map[string]*jsonschema.Schema
+	tasks   map[string]bool
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]core.ToolSpec, error) {
-	if _, ok := c.Capabilities["tools"]; !ok {
-		return []core.ToolSpec{}, nil
-	}
-	items, err := c.list(ctx, "tools/list", "tools")
+	set, err := c.discoverTools(ctx)
 	if err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	c.outputSchemas = set.outputs
+	c.taskRequired = set.tasks
+	c.mu.Unlock()
+	return cloneToolSpecs(set.specs), nil
+}
+
+// cloneToolSpecs returns specs whose schemas callers may keep or modify.
+func cloneToolSpecs(specs []core.ToolSpec) []core.ToolSpec {
+	out := make([]core.ToolSpec, len(specs))
+	for i, spec := range specs {
+		spec.InputSchema = bytes.Clone(spec.InputSchema)
+		out[i] = spec
+	}
+	return out
+}
+
+func (c *Client) discoverTools(ctx context.Context) (discoveredTools, error) {
+	if _, ok := c.Capabilities["tools"]; !ok {
+		return discoveredTools{specs: []core.ToolSpec{}, outputs: map[string]*jsonschema.Schema{}, tasks: map[string]bool{}}, nil
+	}
+	items, err := c.list(ctx, "tools/list", "tools")
+	if err != nil {
+		return discoveredTools{}, err
+	}
 	seen := map[string]bool{}
+	outputs := map[string]*jsonschema.Schema{}
+	tasks := map[string]bool{}
 	result := make([]core.ToolSpec, 0, len(items))
 	for _, item := range items {
 		var tool Tool
 		if err := json.Unmarshal(item, &tool); err != nil {
-			return nil, err
+			return discoveredTools{}, err
 		}
 		if tool.Name == "" || seen[tool.Name] {
-			return nil, fmt.Errorf("invalid or duplicate MCP tool name %q", tool.Name)
+			return discoveredTools{}, fmt.Errorf("invalid or duplicate MCP tool name %q", tool.Name)
 		}
 		seen[tool.Name] = true
 		var schema map[string]any
 		if err := json.Unmarshal(tool.InputSchema, &schema); err != nil || schema == nil {
-			return nil, fmt.Errorf("invalid input schema for MCP tool %q", tool.Name)
+			return discoveredTools{}, fmt.Errorf("invalid input schema for MCP tool %q", tool.Name)
 		}
 		if schema["type"] != "object" {
-			return nil, fmt.Errorf("MCP tool %q input schema must be an object", tool.Name)
+			return discoveredTools{}, fmt.Errorf("MCP tool %q input schema must be an object", tool.Name)
 		}
+		if _, err := jsonschema.Compile(tool.InputSchema); err != nil {
+			return discoveredTools{}, fmt.Errorf("invalid input schema for MCP tool %q: %w", tool.Name, err)
+		}
+		if len(tool.OutputSchema) > 0 {
+			compiled, err := jsonschema.Compile(tool.OutputSchema)
+			if err != nil {
+				return discoveredTools{}, fmt.Errorf("invalid output schema for MCP tool %q: %w", tool.Name, err)
+			}
+			outputs[tool.Name] = compiled
+		}
+		tasks[tool.Name] = tool.Execution.TaskSupport == "required"
 		result = append(result, core.ToolSpec{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema})
 	}
-	return result, nil
+	return discoveredTools{specs: result, outputs: outputs, tasks: tasks}, nil
 }
 
 func (c *Client) ListResources(ctx context.Context) ([]json.RawMessage, error) {
@@ -580,7 +644,18 @@ type ToolResult struct {
 }
 
 func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
+	c.mu.Lock()
+	output := c.outputSchemas[name]
+	required := c.taskRequired[name]
+	c.mu.Unlock()
+	return c.callToolChecked(ctx, name, args, output, required)
+}
+
+func (c *Client) callToolChecked(ctx context.Context, name string, args json.RawMessage, output *jsonschema.Schema, required bool) (ToolResult, error) {
 	var result ToolResult
+	if required {
+		return result, errors.New("MCP tool requires task-based execution; the official bridge does not support this extension")
+	}
 	if !json.Valid(args) {
 		return result, errors.New("MCP tool arguments must be valid JSON")
 	}
@@ -593,7 +668,53 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 	if result.IsError {
 		return result, errors.New("MCP server returned isError tool result")
 	}
+	if err := validateToolResult(result); err != nil {
+		return ToolResult{}, err
+	}
+	if output != nil {
+		if len(result.StructuredContent) == 0 {
+			return ToolResult{}, errors.New("MCP tool omitted structuredContent required by its output schema")
+		}
+		if err := output.ValidateJSON(result.StructuredContent); err != nil {
+			return ToolResult{}, fmt.Errorf("MCP tool output failed advertised schema: %w", err)
+		}
+	}
 	return result, nil
+}
+
+func validateToolResult(result ToolResult) error {
+	for _, raw := range result.Content {
+		var block map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &block); err != nil || block == nil {
+			return errors.New("invalid MCP content block")
+		}
+		var kind string
+		if json.Unmarshal(block["type"], &kind) != nil || kind == "" {
+			return errors.New("MCP content block is missing its type")
+		}
+		fields := []string{}
+		switch kind {
+		case "text":
+			fields = []string{"text"}
+		case "image", "audio":
+			fields = []string{"data", "mimeType"}
+		case "resource_link":
+			fields = []string{"name", "uri"}
+		}
+		for _, field := range fields {
+			var value string
+			if json.Unmarshal(block[field], &value) != nil || string(block[field]) == "null" {
+				return fmt.Errorf("invalid MCP %s content: %s must be a string", kind, field)
+			}
+		}
+	}
+	if len(result.StructuredContent) > 0 {
+		var object map[string]json.RawMessage
+		if json.Unmarshal(result.StructuredContent, &object) != nil || object == nil {
+			return errors.New("MCP structuredContent must be an object")
+		}
+	}
+	return nil
 }
 
 var validServerName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
