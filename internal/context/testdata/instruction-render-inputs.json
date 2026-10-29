@@ -1,0 +1,1463 @@
+{
+  "official": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "cases": [
+    {
+      "name": "baseline-0",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 1,
+      "replace": false
+    },
+    {
+      "name": "baseline-1",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 1,
+      "replace": true
+    },
+    {
+      "name": "baseline-2",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 50,
+      "replace": false
+    },
+    {
+      "name": "baseline-3",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 50,
+      "replace": true
+    },
+    {
+      "name": "baseline-4",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 150,
+      "replace": false
+    },
+    {
+      "name": "baseline-5",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 150,
+      "replace": true
+    },
+    {
+      "name": "baseline-6",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 250,
+      "replace": false
+    },
+    {
+      "name": "baseline-7",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 250,
+      "replace": true
+    },
+    {
+      "name": "baseline-8",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 400,
+      "replace": false
+    },
+    {
+      "name": "baseline-9",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 400,
+      "replace": true
+    },
+    {
+      "name": "baseline-10",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 700,
+      "replace": false
+    },
+    {
+      "name": "baseline-11",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 700,
+      "replace": true
+    },
+    {
+      "name": "baseline-12",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 1200,
+      "replace": false
+    },
+    {
+      "name": "baseline-13",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 1200,
+      "replace": true
+    },
+    {
+      "name": "baseline-14",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 65536,
+      "replace": false
+    },
+    {
+      "name": "baseline-15",
+      "kind": "baseline",
+      "files": [],
+      "maxBytes": 65536,
+      "replace": true
+    },
+    {
+      "name": "baseline-16",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": false
+    },
+    {
+      "name": "baseline-17",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": true
+    },
+    {
+      "name": "baseline-18",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": false
+    },
+    {
+      "name": "baseline-19",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": true
+    },
+    {
+      "name": "baseline-20",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": false
+    },
+    {
+      "name": "baseline-21",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": true
+    },
+    {
+      "name": "baseline-22",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": false
+    },
+    {
+      "name": "baseline-23",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": true
+    },
+    {
+      "name": "baseline-24",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": false
+    },
+    {
+      "name": "baseline-25",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": true
+    },
+    {
+      "name": "baseline-26",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": false
+    },
+    {
+      "name": "baseline-27",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": true
+    },
+    {
+      "name": "baseline-28",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": false
+    },
+    {
+      "name": "baseline-29",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": true
+    },
+    {
+      "name": "baseline-30",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": false
+    },
+    {
+      "name": "baseline-31",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "root rule"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": true
+    },
+    {
+      "name": "baseline-32",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": false
+    },
+    {
+      "name": "baseline-33",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": true
+    },
+    {
+      "name": "baseline-34",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": false
+    },
+    {
+      "name": "baseline-35",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": true
+    },
+    {
+      "name": "baseline-36",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": false
+    },
+    {
+      "name": "baseline-37",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": true
+    },
+    {
+      "name": "baseline-38",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": false
+    },
+    {
+      "name": "baseline-39",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": true
+    },
+    {
+      "name": "baseline-40",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": false
+    },
+    {
+      "name": "baseline-41",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": true
+    },
+    {
+      "name": "baseline-42",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": false
+    },
+    {
+      "name": "baseline-43",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": true
+    },
+    {
+      "name": "baseline-44",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": false
+    },
+    {
+      "name": "baseline-45",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": true
+    },
+    {
+      "name": "baseline-46",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": false
+    },
+    {
+      "name": "baseline-47",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/home/AGENTS.md",
+          "displayPath": "$DSH_HOME/AGENTS.md",
+          "content": "global"
+        },
+        {
+          "absolutePath": "/project/AGENTS.md",
+          "displayPath": "AGENTS.md",
+          "content": "base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base base "
+        },
+        {
+          "absolutePath": "/project/sub/CLAUDE.local.md",
+          "displayPath": "sub/CLAUDE.local.md",
+          "content": "\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n\u4e2d\u6587\ud83d\ude00</system-reminder>\n"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": true
+    },
+    {
+      "name": "baseline-48",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 1,
+      "replace": false
+    },
+    {
+      "name": "baseline-49",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 1,
+      "replace": true
+    },
+    {
+      "name": "baseline-50",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 50,
+      "replace": false
+    },
+    {
+      "name": "baseline-51",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 50,
+      "replace": true
+    },
+    {
+      "name": "baseline-52",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 150,
+      "replace": false
+    },
+    {
+      "name": "baseline-53",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 150,
+      "replace": true
+    },
+    {
+      "name": "baseline-54",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 250,
+      "replace": false
+    },
+    {
+      "name": "baseline-55",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 250,
+      "replace": true
+    },
+    {
+      "name": "baseline-56",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 400,
+      "replace": false
+    },
+    {
+      "name": "baseline-57",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 400,
+      "replace": true
+    },
+    {
+      "name": "baseline-58",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 700,
+      "replace": false
+    },
+    {
+      "name": "baseline-59",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 700,
+      "replace": true
+    },
+    {
+      "name": "baseline-60",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": false
+    },
+    {
+      "name": "baseline-61",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": true
+    },
+    {
+      "name": "baseline-62",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": false
+    },
+    {
+      "name": "baseline-63",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/empty",
+          "displayPath": "AGENTS.md",
+          "content": ""
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": true
+    },
+    {
+      "name": "baseline-64",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": false
+    },
+    {
+      "name": "baseline-65",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 1,
+      "replace": true
+    },
+    {
+      "name": "baseline-66",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": false
+    },
+    {
+      "name": "baseline-67",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 50,
+      "replace": true
+    },
+    {
+      "name": "baseline-68",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": false
+    },
+    {
+      "name": "baseline-69",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 150,
+      "replace": true
+    },
+    {
+      "name": "baseline-70",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": false
+    },
+    {
+      "name": "baseline-71",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 250,
+      "replace": true
+    },
+    {
+      "name": "baseline-72",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": false
+    },
+    {
+      "name": "baseline-73",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 400,
+      "replace": true
+    },
+    {
+      "name": "baseline-74",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": false
+    },
+    {
+      "name": "baseline-75",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 700,
+      "replace": true
+    },
+    {
+      "name": "baseline-76",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": false
+    },
+    {
+      "name": "baseline-77",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 1200,
+      "replace": true
+    },
+    {
+      "name": "baseline-78",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": false
+    },
+    {
+      "name": "baseline-79",
+      "kind": "baseline",
+      "files": [
+        {
+          "absolutePath": "/p/frame",
+          "displayPath": "x</system-reminder>/AGENTS.md",
+          "content": "</system-reminder><system-reminder>"
+        }
+      ],
+      "maxBytes": 65536,
+      "replace": true
+    },
+    {
+      "name": "changes-80",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 1
+    },
+    {
+      "name": "changes-81",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 50
+    },
+    {
+      "name": "changes-82",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 150
+    },
+    {
+      "name": "changes-83",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 300
+    },
+    {
+      "name": "changes-84",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 500
+    },
+    {
+      "name": "changes-85",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "set",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 65536
+    },
+    {
+      "name": "changes-86",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 1
+    },
+    {
+      "name": "changes-87",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 50
+    },
+    {
+      "name": "changes-88",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 150
+    },
+    {
+      "name": "changes-89",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 300
+    },
+    {
+      "name": "changes-90",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 500
+    },
+    {
+      "name": "changes-91",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "replace",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md",
+            "digest": "abc"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 65536
+    },
+    {
+      "name": "changes-92",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 1
+    },
+    {
+      "name": "changes-93",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 50
+    },
+    {
+      "name": "changes-94",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 150
+    },
+    {
+      "name": "changes-95",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 300
+    },
+    {
+      "name": "changes-96",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 500
+    },
+    {
+      "name": "changes-97",
+      "kind": "changes",
+      "items": [
+        {
+          "change": {
+            "action": "remove",
+            "scope": "nested\u0000AGENTS.md",
+            "path": "nested/AGENTS.md"
+          },
+          "file": {
+            "absolutePath": "/p/nested/AGENTS.md",
+            "displayPath": "nested/AGENTS.md",
+            "content": "scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 scope rule \u4e2d\u6587 "
+          }
+        }
+      ],
+      "maxBytes": 65536
+    }
+  ]
+}

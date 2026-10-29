@@ -127,7 +127,7 @@ func TestBackgroundWorkflowJobsOwnCancellationAndRestartReplay(t *testing.T) {
 }
 func TestWorkflowProviderOverrideValidationAndStructuredResults(t *testing.T) {
 	a, parent := workflowApp(t, lifecycleModel(func(ctx context.Context, req core.Request, emit func(core.Delta)) (core.Response, error) {
-		return core.Response{Content: []core.Block{{Type: "text", Text: `{"count":2}`}}}, nil
+		return core.Response{Content: []core.Block{{Type: "tool_use", ID: "capture", Name: "structured_output", Input: json.RawMessage(`{"count":2}`)}}}, nil
 	}))
 	tc := core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, WorkspaceRoot: parent.CWD, Permission: "read-only"}
 	if _, err := a.workflowTool(a.ctx, tc, workflowInput(`return await parallel([()=>agent('work',{provider:'missing'})]);`, false)); err == nil {
@@ -139,6 +139,71 @@ func TestWorkflowProviderOverrideValidationAndStructuredResults(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, `"count":2`) {
 		t.Fatalf("structured %s", result.Content)
+	}
+}
+
+func TestWorkflowStructuredCaptureAcrossPresetsAndPTC(t *testing.T) {
+	for _, route := range []struct{ preset, mode string }{{"standard", "native"}, {"minimal", "native"}, {"ptc", "ptc"}, {"standard", "ptc-repl"}} {
+		t.Run(route.preset+"/"+route.mode, func(t *testing.T) {
+			calls := 0
+			a, parent := workflowApp(t, lifecycleModel(func(ctx context.Context, req core.Request, emit func(core.Delta)) (core.Response, error) {
+				calls++
+				if !strings.Contains(req.System, "structured_output") {
+					t.Error("capture instruction absent")
+				}
+				if route.mode == "native" {
+					found := false
+					for _, spec := range req.Tools {
+						found = found || spec.Name == "structured_output"
+					}
+					if !found {
+						t.Error("capture tool absent")
+					}
+					args := json.RawMessage(`{"count":"invalid"}`)
+					if calls > 1 {
+						args = json.RawMessage(`{"count":2}`)
+					}
+					return core.Response{Content: []core.Block{{Type: "tool_use", ID: "capture", Name: "structured_output", Input: args}}}, nil
+				}
+				if len(req.Tools) != 1 || req.Tools[0].Name != "run_code" {
+					t.Error("PTC presentation changed", req.Tools)
+				}
+				script := `return await tools.structured_output({count:2});`
+				if route.mode == "ptc-repl" {
+					script = `await tools.structured_output({count:2})`
+				}
+				return core.Response{Content: []core.Block{{Type: "tool_use", ID: "capture", Name: "run_code", Input: core.JSON(map[string]any{"code": script})}}}, nil
+			}))
+			parent.Preset, parent.ExecutionMode = route.preset, route.mode
+			if err := a.store.Update(parent); err != nil {
+				t.Fatal(err)
+			}
+			result, err := a.workflowTool(a.ctx, core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, WorkspaceRoot: parent.CWD, Permission: "read-only"}, workflowInput(`return await agent('work',{schema:{type:'object',properties:{count:{type:'integer'}},required:['count'],additionalProperties:false}});`, false))
+			if err != nil || !strings.Contains(result.Content, `"count":2`) {
+				t.Fatalf("capture %s: %v", result.Content, err)
+			}
+			want := 1
+			if route.mode == "native" {
+				want = 2
+			}
+			if calls != want {
+				t.Fatalf("requests=%d want=%d", calls, want)
+			}
+		})
+	}
+}
+
+func TestWorkflowPlainJSONIsNotAStructuredSubmission(t *testing.T) {
+	a, parent := workflowApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
+		return core.Response{Content: []core.Block{{Type: "text", Text: `{"count":2}`}}}, nil
+	}))
+	result, err := a.workflowTool(a.ctx, core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, WorkspaceRoot: parent.CWD, Permission: "read-only"}, workflowInput(`return await agent('work',{schema:{type:'object',properties:{count:{type:'integer'}},required:['count']}});`, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value struct{ Result json.RawMessage }
+	if json.Unmarshal([]byte(result.Content), &value) != nil || string(value.Result) != "null" {
+		t.Fatalf("plain text was accepted: %s", result.Content)
 	}
 }
 

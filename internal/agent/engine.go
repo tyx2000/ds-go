@@ -30,16 +30,24 @@ type Options struct {
 	MaxTokens        int
 	MaxSteps         int
 	ContextTokens    int
+	ContextFor       func(context.Context, core.Request) (ContextRoute, error)
+	ToolResultPruner *ToolResultPruneConfig
 	ApprovalPolicy   string
 	ExecutionMode    string
 	System           string
 	SystemFor        func(core.Session) (string, error)
 	ToolsFor         func(core.Session) []core.ToolSpec
 	RequestContext   func(context.Context, core.Session) ([]core.Message, error)
-	BeforeTurn       func(context.Context, core.Session, string) error
-	AfterTurn        func(context.Context, core.Session, string) error
-	RenderToolResult func(context.Context, core.ToolContext, string, core.ToolResult) (core.ToolResult, error)
-	Approve          core.Approver
+	// PrepareInput captures reference context only at actual input admission.
+	// The direct message and its sourced contexts must commit as one batch.
+	PrepareInput        func(context.Context, core.Session, core.Message) (core.Message, []core.Message, error)
+	CommitPreparedInput func(context.Context, core.Session, string, core.Message, []core.Message) (core.Event, bool, error)
+	BeforeModel         func(context.Context, core.Session, string, core.Request) error
+	BeforeStep          func(context.Context, core.Session, string, int) error
+	BeforeTurn          func(context.Context, core.Session, string) error
+	AfterTurn           func(context.Context, core.Session, string) error
+	RenderToolResult    func(context.Context, core.ToolContext, string, core.ToolResult) (core.ToolResult, error)
+	Approve             core.Approver
 }
 
 type Notice struct {
@@ -49,17 +57,19 @@ type Notice struct {
 }
 
 type Engine struct {
-	Store   Store
-	Model   core.Model
-	Tools   core.Executor
-	Options Options
-	Notify  func(Notice)
-	mu      sync.Mutex
-	running map[string]context.CancelFunc
-	idle    map[string]chan struct{}
-	closed  bool
-	wg      sync.WaitGroup
-	repeat  *RepeatReminder
+	Store      Store
+	Model      core.Model
+	Tools      core.Executor
+	Options    Options
+	Notify     func(Notice)
+	mu         sync.Mutex
+	running    map[string]context.CancelFunc
+	idle       map[string]chan struct{}
+	closed     bool
+	wg         sync.WaitGroup
+	repeat     *RepeatReminder
+	structured map[string]*StructuredRun
+	liveTools  map[string]liveToolExecution
 }
 
 func New(store Store, model core.Model, tools core.Executor, opts Options) *Engine {
@@ -137,15 +147,23 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 	e.idle[id] = make(chan struct{})
 	e.wg.Add(1)
 	e.mu.Unlock()
+	structured := e.structuredRun(id)
 	defer func() {
 		cancel()
 		e.mu.Lock()
 		delete(e.running, id)
+		delete(e.liveTools, id)
 		close(e.idle[id])
 		delete(e.idle, id)
 		e.mu.Unlock()
 		e.wg.Done()
 	}()
+	if structured != nil {
+		defer structured.abortUncommitted()
+		if input != nil && !structured.AcceptsInput() {
+			return errors.New("structured output already staged: input is closed")
+		}
+	}
 	if locker, ok := e.Store.(interface {
 		AcquireSession(context.Context, string) (func(), error)
 	}); ok {
@@ -166,23 +184,10 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		return errors.New("cannot run an archived session")
 	}
 	if input != nil && input.DeliveryID != "" {
-		if events, ok := e.Store.(interface {
-			Events(string) ([]core.Event, error)
-		}); ok {
-			log, err := events.Events(id)
-			if err != nil {
-				return err
-			}
-			for _, event := range log {
-				if event.Type == "user/message" {
-					var m core.Message
-					if json.Unmarshal(event.Data, &m) == nil && m.DeliveryID == input.DeliveryID {
-						return nil
-					}
-				}
-			}
-		} else {
-			return errors.New("idempotent delivery requires the event store")
+		if accepted, err := e.inputAlreadyAccepted(id, input.DeliveryID); err != nil {
+			return err
+		} else if accepted {
+			return nil
 		}
 	}
 	opts := e.options()
@@ -258,7 +263,12 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 	}
 	if input != nil {
 		e.repeat.Reset(id)
-		if err = appendEvent("user/message", *input); err != nil {
+		prepared, x := e.appendInput(ctx, id, turn, *input)
+		if x != nil {
+			return x
+		}
+		input = &prepared
+		if err = ctx.Err(); err != nil {
 			return err
 		}
 	}
@@ -281,12 +291,21 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if _, err = e.admitInbox(id, turn); err != nil {
+		if _, err = e.admitInbox(ctx, id, turn); err != nil {
 			return err
 		}
 		session, err = e.Store.Get(id)
 		if err != nil {
 			return err
+		}
+		if opts.BeforeStep != nil {
+			if err = opts.BeforeStep(ctx, session, turn, step+1); err != nil {
+				return err
+			}
+			session, err = e.Store.Get(id)
+			if err != nil {
+				return err
+			}
 		}
 		messages, x := e.Store.Messages(id)
 		if x != nil {
@@ -313,6 +332,9 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		if opts.ToolsFor != nil {
 			specs = opts.ToolsFor(session)
 		}
+		if spec, ok := e.StructuredSpec(id); ok {
+			specs = withStructuredSpec(specs, spec)
+		}
 		executionMode := session.ExecutionMode
 		if executionMode == "" {
 			executionMode = opts.ExecutionMode
@@ -332,10 +354,19 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			}
 			specs = filtered
 		}
+		system = opts.System
 		if opts.SystemFor != nil {
 			system, err = opts.SystemFor(session)
 			if err != nil {
 				return err
+			}
+		}
+		if instruction := e.StructuredInstruction(id); instruction != "" {
+			system += "\n\n" + instruction
+			if executionMode == "ptc" || executionMode == "ptc-repl" {
+				if spec, ok := e.StructuredSpec(id); ok {
+					system += "\nPTC binding: tools.structured_output(args)\nArguments JSON schema: " + string(spec.InputSchema)
+				}
 			}
 		}
 		provider := session.Provider
@@ -350,6 +381,11 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			messages = append(messages, contextMessages...)
 		}
 		req := core.Request{Provider: provider, Model: model, Thinking: thinking, System: system, Messages: messages, Tools: specs, MaxTokens: opts.MaxTokens, SessionID: id, Purpose: "agent"}
+		if opts.BeforeModel != nil {
+			if err = opts.BeforeModel(ctx, session, turn, req); err != nil {
+				return err
+			}
+		}
 		if err = appendEvent("step/started", map[string]any{"step": step + 1, "model": model}); err != nil {
 			return err
 		}
@@ -383,7 +419,7 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		if len(response.Content) == 0 {
 			return errors.New("model returned an empty response")
 		}
-		assistant := core.Message{Role: "assistant", Content: response.Content, ReplayModel: model, ReplayProvider: provider}
+		assistant := core.Message{Role: "assistant", Content: response.Content, ReplayModel: model, ReplayProvider: provider, ReplayIdentity: response.ReplayIdentity}
 		if err = appendEvent("assistant/message", assistant); err != nil {
 			return err
 		}
@@ -403,7 +439,7 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			if response.StopReason == "max_tokens" {
 				return errors.New("model output limit reached; use /continue to continue")
 			}
-			if admitted, x := e.admitInbox(id, turn); x != nil {
+			if admitted, x := e.admitInbox(ctx, id, turn); x != nil {
 				return x
 			} else if admitted {
 				continue
@@ -426,10 +462,18 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return err
 			}
 			e.emit(id, "tool_started", call)
-			tc := core.ToolContext{SessionID: id, TurnID: turn, CallID: call.ID, CWD: session.CWD, WorkspaceRoot: session.CWD, ExecutionMode: executionMode, Permission: session.Permission, ApprovalPolicy: opts.ApprovalPolicy, Approve: opts.Approve}
+			tc := core.ToolContext{SessionID: id, TurnID: turn, CallID: call.ID, ExecutionID: ID(), CWD: session.CWD, WorkspaceRoot: session.CWD, ExecutionMode: executionMode, Permission: session.Permission, ApprovalPolicy: opts.ApprovalPolicy, Approve: opts.Approve}
+			if spec, ok := e.StructuredSpec(id); ok {
+				tc.ExtraTools = []core.ToolSpec{spec}
+			}
 			tc.Inject = func(message core.Message) error {
 				if message.Role != "user" {
 					return errors.New("injected message must have user role")
+				}
+				if structured != nil {
+					if err := structured.acceptInjected(); err != nil {
+						return err
+					}
 				}
 				inboxMu.Lock()
 				inbox = append(inbox, message)
@@ -443,10 +487,17 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				defer emitMu.Unlock()
 				if emitErr == nil {
 					emitErr = appendEvent(kind, data)
+					if emitErr == nil && kind == "tool/subresult" {
+						e.structuredSubresult(id, tc.ExecutionID, data)
+					}
 				}
 				return emitErr
 			}
-			result, toolErr := e.Tools.Execute(ctx, tc, call.Name, call.Input)
+			e.beginToolExecution(tc)
+			result, handled, toolErr := e.ExecuteStructured(ctx, tc, call.Name, call.Input)
+			if !handled {
+				result, toolErr = e.Tools.Execute(ctx, tc, call.Name, call.Input)
+			}
 			if notice := e.repeat.Observe(id, call.Name, call.Input); notice != nil {
 				message := core.TextMessage("user", notice.Text)
 				message.Source = notice.Source
@@ -471,6 +522,8 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			if err = appendEvent("tool/finished", map[string]any{"id": call.ID, "name": call.Name, "result": result}); err != nil {
 				return err
 			}
+			e.structuredTopResult(id, tc.ExecutionID, tc.CallID, !result.IsError && ctx.Err() == nil)
+			e.endToolExecution(tc)
 			e.emit(id, "tool_finished", map[string]any{"name": call.Name, "result": result})
 			var content any = result.Content
 			if len(result.Blocks) > 0 {
@@ -490,8 +543,16 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return x
 			}
 		}
+		if structured != nil {
+			structured.consumeInjected(len(inbox))
+		}
 		if err = ctx.Err(); err != nil {
 			return err
+		}
+		if structured != nil {
+			if _, captured := structured.Captured(); captured {
+				return nil
+			}
 		}
 	}
 	return fmt.Errorf("turn reached the configured limit of %d model steps", opts.MaxSteps)
@@ -525,18 +586,29 @@ func (e *Engine) compact(ctx context.Context, id, turn string, messages []core.M
 	// Compact a prefix ending before a user message, never between a tool call
 	// and its result. Keep at least the most recent complete user turn.
 	cut := len(messages) - 1
-	for cut > 0 {
-		m := messages[cut]
-		if m.Role == "user" && len(m.Content) > 0 && m.Content[0].Type != "tool_result" {
-			break
+	if store, ok := e.Store.(interface{ CompactionBoundary(string) (int, error) }); ok {
+		var err error
+		cut, err = store.CompactionBoundary(id)
+		if err != nil {
+			return err
 		}
-		cut--
+		if cut >= len(messages) {
+			return errors.New("compaction input boundary is outside projected history")
+		}
+	} else {
+		for cut > 0 {
+			m := messages[cut]
+			if m.Role == "user" && len(m.Content) > 0 && m.Content[0].Type != "tool_result" && !isInputSnapshot(m) {
+				break
+			}
+			cut--
+		}
 	}
 	if cut < 1 {
 		return errors.New("no complete history prefix available for compaction")
 	}
 	prefix := messages[:cut]
-	prompt := "Summarize this coding session for continuation. Preserve user requirements, paths, edits, decisions, tool outcomes, unresolved errors, and next actions. Do not invent progress. Return only the summary.\n\n" + string(core.JSON(prefix))
+	prompt := "Summarize this coding session for continuation. Preserve user requirements, paths, edits, decisions, tool outcomes, unresolved errors, and next actions. Do not invent progress. Return only the summary.\n\n" + string(core.JSON(compactionHistory(prefix)))
 	session, err := e.Store.Get(id)
 	if err != nil {
 		return err
@@ -564,7 +636,7 @@ func (e *Engine) compact(ctx context.Context, id, turn string, messages []core.M
 	}
 	newMessages := []core.Message{core.TextMessage("user", "Previous session context (summary):\n"+strings.Join(parts, "\n")), core.TextMessage("assistant", "I will continue using this summary and the following recent history.")}
 	newMessages = append(newMessages, messages[cut:]...)
-	ev, err := e.Store.Append(id, turn, "context/compacted", map[string]any{"messages": newMessages, "at": time.Now().UTC(), "source_messages": cut})
+	ev, err := e.Store.Append(id, turn, "context/compacted", map[string]any{"messages": newMessages, "at": time.Now().UTC(), "source_messages": cut, "retained_input_start": 2})
 	if err == nil {
 		e.emit(id, "event", ev)
 	}

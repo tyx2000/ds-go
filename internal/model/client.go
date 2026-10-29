@@ -35,6 +35,10 @@ type Options struct {
 	IdleTimeout time.Duration
 	// DisableFiles sends prepared base64 images inline instead of uploading them.
 	DisableFiles bool
+	// ReplayKey scopes opaque replay to the endpoint and effective credentials.
+	// A stable private 32-byte key permits replay after restarting the CLI. An
+	// omitted key creates an instance-local key and safely degrades old replay.
+	ReplayKey []byte `json:"-"`
 }
 
 type Client struct {
@@ -47,6 +51,7 @@ type Client struct {
 	disableFiles            bool
 	mu                      sync.Mutex
 	files                   map[string]cachedFile
+	replayKey               []byte
 }
 
 var _ core.Model = (*Client)(nil)
@@ -71,6 +76,8 @@ func New(options Options) *Client {
 	c := &Client{apiKey: options.APIKey, token: options.Token, retries: options.MaxRetries,
 		retryDelay: options.RetryDelay, idleTimeout: options.IdleTimeout,
 		disableFiles: options.DisableFiles, files: make(map[string]cachedFile)}
+	var replayErr error
+	c.replayKey, replayErr = replayKey(options.ReplayKey)
 	if c.retries == 0 {
 		c.retries = 2
 	}
@@ -106,6 +113,9 @@ func New(options Options) *Client {
 		if strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 			c.initErr = &Error{Code: "INVALID_CREDENTIAL"}
 		}
+	}
+	if replayErr != nil {
+		c.initErr = replayErr
 	}
 	if options.HTTPClient == nil {
 		c.http = &http.Client{}
@@ -173,6 +183,7 @@ func (c *Client) Stream(ctx context.Context, input core.Request, emit func(core.
 	if ctx.Err() != nil {
 		return core.Response{}, ctx.Err()
 	}
+	input.ReplayIdentity = c.replayIdentity(input.Provider)
 	body, err := serialize(input)
 	if err != nil {
 		return core.Response{}, err
@@ -248,6 +259,7 @@ func (c *Client) Stream(ctx context.Context, input core.Request, emit func(core.
 		}
 		timedOut := watch.stop()
 		cancel()
+		result.ReplayIdentity = input.ReplayIdentity
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

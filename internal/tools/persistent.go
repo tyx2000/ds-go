@@ -109,6 +109,7 @@ type nodeEnvironment struct {
 	mu                             sync.Mutex
 	writeMu                        sync.Mutex
 	mode, cwd, workspace, nodePath string
+	bindings                       string
 	active                         *nodeEvaluation
 	busy                           bool
 	cmd                            *exec.Cmd
@@ -188,7 +189,7 @@ func (r *Registry) startEnvironment(cwd, workspace, mode, nodePath string, names
 		sc.cleanup()
 		return nil, err
 	}
-	e := &nodeEnvironment{mode: mode, cwd: cwd, nodePath: nodePath, cmd: sc.cmd, stdin: stdin, control: reader, cancel: cancel, done: make(chan struct{}), scanDone: make(chan struct{}), ready: make(chan error, 1), registry: r, cleanup: sc.cleanup}
+	e := &nodeEnvironment{mode: mode, cwd: cwd, nodePath: nodePath, bindings: string(core.JSON(names)), cmd: sc.cmd, stdin: stdin, control: reader, cancel: cancel, done: make(chan struct{}), scanDone: make(chan struct{}), ready: make(chan error, 1), registry: r, cleanup: sc.cleanup}
 	sc.cmd.ExtraFiles = []*os.File{writer}
 	sc.cmd.Stdout = environmentOutput{e}
 	sc.cmd.Stderr = environmentOutput{e}
@@ -347,12 +348,7 @@ func (r *Registry) runPersistentCode(ctx context.Context, tc core.ToolContext, c
 	if err != nil {
 		return core.ToolResult{}, err
 	}
-	names := []string{}
-	for _, s := range r.Specs() {
-		if s.Name != "run_code" {
-			names = append(names, s.Name)
-		}
-	}
+	names := r.ptcBindingNames(tc.ExtraTools)
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -363,7 +359,7 @@ func (r *Registry) runPersistentCode(ctx context.Context, tc core.ToolContext, c
 		nodePath = "node"
 	}
 	e := r.environments[tc.SessionID]
-	if e != nil && (e.mode != mode || e.cwd != cwd || e.workspace != workspace || e.nodePath != nodePath || !e.alive()) {
+	if e != nil && (e.mode != mode || e.cwd != cwd || e.workspace != workspace || e.nodePath != nodePath || e.bindings != string(core.JSON(names)) || !e.alive()) {
 		delete(r.environments, tc.SessionID)
 		r.mu.Unlock()
 		e.stop()

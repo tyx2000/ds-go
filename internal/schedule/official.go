@@ -33,6 +33,7 @@ type Options struct {
 	// CheckSession is called inside the management transaction for create/update.
 	// Return *InputError for public admission failures; other errors remain private.
 	CheckSession func(context.Context, string) error
+	Warn         func(error)
 }
 
 func defaultOptions() Options { return Options{DeliveryHistoryDays: 30, DeliveryHistoryRecords: 200} }
@@ -43,8 +44,8 @@ func (s *Store) SetOptions(options Options) error {
 	if options.DeliveryHistoryRecords == 0 {
 		options.DeliveryHistoryRecords = 200
 	}
-	if options.DeliveryHistoryDays < 1 || options.DeliveryHistoryRecords < 1 {
-		return inputError("invalid_rule", "Delivery history retention must be positive.")
+	if options.DeliveryHistoryDays < 1 || options.DeliveryHistoryDays > 3650 || options.DeliveryHistoryRecords < 1 || options.DeliveryHistoryRecords > 10000 {
+		return inputError("invalid_rule", "Delivery history must retain 1..3650 days and 1..10000 records.")
 	}
 	s.optionsMu.Lock()
 	s.options = options
@@ -136,7 +137,20 @@ type UpdateResult struct {
 	Code    string  `json:"code,omitempty"`
 	Record  *Record `json:"record,omitempty"`
 	View    *View   `json:"-"`
+	Message string  `json:"message,omitempty"`
 }
+
+func (r UpdateResult) MarshalJSON() ([]byte, error) {
+	if r.Code == "subagent_session" {
+		return json.Marshal(struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		}{r.Code, r.Message})
+	}
+	type plain UpdateResult
+	return json.Marshal(plain(r))
+}
+
 type DeleteResult struct {
 	ID      string `json:"id"`
 	Deleted bool   `json:"deleted"`
@@ -284,13 +298,14 @@ func canonicalZone(zone string) (string, error) {
 	if zone != "UTC" && (!zoneShape.MatchString(zone) || strings.TrimSpace(zone) != zone) {
 		return "", inputError("invalid_time_zone", "time_zone must be UTC or a valid IANA Area/Location name.")
 	}
-	if _, err := time.LoadLocation(zone); err != nil {
+	canonical, known := canonicalZones[strings.ToLower(zone)]
+	if !known {
 		return "", inputError("invalid_time_zone", "time_zone must be UTC or a valid IANA Area/Location name.")
 	}
-	if zone == "Etc/UTC" || zone == "Etc/GMT" {
-		return "UTC", nil
+	if _, err := time.LoadLocation(canonical); err != nil {
+		return "", inputError("invalid_time_zone", "time_zone must be UTC or a valid IANA Area/Location name.")
 	}
-	return zone, nil
+	return canonical, nil
 }
 func normalizedClock(clock string) string {
 	h, m, sec, nsec, err := parseClock(clock)
@@ -437,18 +452,11 @@ func prepareOfficial(sessionID string, req CreateRequest, now time.Time) (Task, 
 	return t, nil
 }
 
-func (s *Store) CreateOfficial(ctx context.Context, sessionID string, req CreateRequest) (View, error) {
-	var task Task
+func (s *Store) createOfficial(ctx context.Context, task Task) (View, error) {
 	err := s.locked(ctx, func() error {
-		if err := s.checkSession(ctx, sessionID); err != nil {
+		if err := s.checkSession(ctx, task.SessionID); err != nil {
 			return err
 		}
-		var err error
-		task, err = prepareOfficial(sessionID, req, time.Now().UTC().Truncate(time.Millisecond))
-		if err != nil {
-			return err
-		}
-		task.ID = id()
 		tasks, err := s.read()
 		if err != nil {
 			return err
@@ -516,10 +524,18 @@ func (s *Store) Catalog(ctx context.Context) ([]CatalogEntry, error) {
 	return out, err
 }
 
-func (s *Store) UpdateOfficial(ctx context.Context, sessionID, id string, expected Record, patch UpdatePatch) (UpdateResult, error) {
+func (s *Store) updateOfficial(ctx context.Context, sessionID, id string, expected Record, patch UpdatePatch) (UpdateResult, error) {
 	result := UpdateResult{ID: id, Code: "schedule_not_found"}
 	invalidatePending := false
 	err := s.locked(ctx, func() error {
+		if err := s.checkSession(ctx, sessionID); err != nil {
+			var refusal *InputError
+			if errors.As(err, &refusal) && refusal.Code == "subagent_session" {
+				result.Code, result.Message = refusal.Code, refusal.Message
+				return nil
+			}
+			return err
+		}
 		tasks, err := s.read()
 		if err != nil {
 			return err
@@ -541,9 +557,6 @@ func (s *Store) UpdateOfficial(ctx context.Context, sessionID, id string, expect
 			if !reflect.DeepEqual(taskRecord(*current), expected) {
 				result.Code = "schedule_conflict"
 				return nil
-			}
-			if err = s.checkSession(ctx, sessionID); err != nil {
-				return err
 			}
 			updated := *current
 			if patch.Title != nil {
@@ -592,6 +605,7 @@ func (s *Store) UpdateOfficial(ctx context.Context, sessionID, id string, expect
 					updated.Pending = ""
 					updated.PendingAt = time.Time{}
 					updated.PendingPrompt = nil
+					updated.PendingNext = nil
 					invalidatePending = current.Pending != ""
 				}
 			}
@@ -683,7 +697,7 @@ func sameTiming(a, b Task) bool {
 	return false
 }
 
-func (s *Store) DeleteOfficial(ctx context.Context, sessionID, id string) (DeleteResult, error) {
+func (s *Store) deleteOfficial(ctx context.Context, sessionID, id string) (DeleteResult, error) {
 	result := DeleteResult{ID: id, Code: "schedule_not_found"}
 	err := s.locked(ctx, func() error {
 		tasks, err := s.read()
@@ -711,7 +725,7 @@ func (s *Store) DeleteOfficial(ctx context.Context, sessionID, id string) (Delet
 	}
 	return result, err
 }
-func (s *Store) StopSession(ctx context.Context, sessionID string) error {
+func (s *Store) stopSession(ctx context.Context, sessionID string) error {
 	var removed []string
 	err := s.locked(ctx, func() error {
 		tasks, err := s.read()
@@ -749,7 +763,7 @@ func (s *Store) cancelActive(id string) {
 	s.activeMu.Unlock()
 }
 
-func (s *Store) Acknowledge(ctx context.Context, sessionID, id, pendingID, messageID string) error {
+func (s *Store) acknowledge(ctx context.Context, sessionID, id, pendingID, messageID string) error {
 	if messageID == "" || strings.TrimSpace(messageID) != messageID {
 		return inputError("invalid_rule", "messageId must be non-empty without surrounding whitespace.")
 	}
@@ -895,13 +909,23 @@ func validateExpected(record Record) error {
 	return nil
 }
 func advanceTask(t *Task, now time.Time) {
+	pendingNext := t.PendingNext
 	t.LastError = ""
 	t.LastDelivered = now
 	t.Pending = ""
 	t.PendingAt = time.Time{}
 	t.PendingPrompt = nil
+	t.PendingNext = nil
 	if t.Kind == "once" {
 		t.Enabled = false
+		return
+	}
+	if pendingNext != nil {
+		if pendingNext.IsZero() {
+			t.Enabled = false
+		} else {
+			t.Next = pendingNext.UTC()
+		}
 		return
 	}
 	next, err := Next(*t, now)
@@ -1067,6 +1091,9 @@ func validateOfficialTask(t Task) error {
 	seen := map[string]bool{}
 	if t.Pending == "" && t.PendingPrompt != nil {
 		return errors.New("pending prompt has no pending delivery")
+	}
+	if t.PendingNext != nil && (t.Pending == "" || !t.PendingNext.IsZero() && !supportedInstant(*t.PendingNext)) {
+		return errors.New("invalid pending next target")
 	}
 	for _, r := range t.DeliveryHistory {
 		if err := validateReceipt(r.Receipt); err != nil {

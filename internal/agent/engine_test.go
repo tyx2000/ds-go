@@ -68,9 +68,9 @@ func TestToolLoopPersistsReplayAndAudit(t *testing.T) {
 			t.Error("missing attribution")
 		}
 		if calls == 1 {
-			return core.Response{Content: []core.Block{{Type: "thinking", Thinking: "reason", Signature: "sig"}, {Type: "tool_use", ID: "call-1", Name: "test", Input: json.RawMessage(`{}`)}}, StopReason: "tool_use"}, nil
+			return core.Response{Content: []core.Block{{Type: "thinking", Thinking: "reason", Signature: "sig"}, {Type: "tool_use", ID: "call-1", Name: "test", Input: json.RawMessage(`{}`)}}, StopReason: "tool_use", ReplayIdentity: "adapter-owned-route-identity"}, nil
 		}
-		if len(r.Messages) != 3 || r.Messages[1].ReplayModel != "test-model" || r.Messages[2].Content[0].ToolUseID != "call-1" {
+		if len(r.Messages) != 3 || r.Messages[1].ReplayModel != "test-model" || r.Messages[1].ReplayIdentity != "adapter-owned-route-identity" || r.Messages[2].Content[0].ToolUseID != "call-1" {
 			t.Errorf("bad replay: %#v", r.Messages)
 		}
 		emit(core.Delta{Type: "text", Text: "done"})

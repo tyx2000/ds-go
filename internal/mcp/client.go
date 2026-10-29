@@ -3,14 +3,12 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +26,10 @@ import (
 )
 
 const ProtocolVersion = "2026-07-28"
-const maxFrameBytes = 8 << 20
+const LegacyProtocolVersion = "2025-11-25"
+
+// The fixed SDK bounds only unread stdio input, not outgoing messages or HTTP.
+const stdioReadBufferBytes = 10 << 20
 const requestTimeout = 60 * time.Second
 
 var ErrClosed = errors.New("MCP connection closed")
@@ -72,26 +73,57 @@ type Client struct {
 	processDone chan struct{}
 	stderr      cappedLog
 
-	mu            sync.Mutex
-	pending       map[string]chan response
-	terminalError error
-	outputSchemas map[string]*jsonschema.Schema
-	taskRequired  map[string]bool
-	done          chan struct{}
-	doneOnce      sync.Once
-	closeOnce     sync.Once
-	closeError    error
-	seq           atomic.Int64
-	notifications chan Notification
-	http          *httpTransport
-	lifetime      context.Context
-	cancel        context.CancelFunc
+	mu             sync.Mutex
+	pending        map[string]chan response
+	terminalError  error
+	outputSchemas  map[string]*jsonschema.Schema
+	outputErrors   map[string]error
+	paramHeaders   map[string][]paramHeaderDeclaration
+	taskRequired   map[string]bool
+	done           chan struct{}
+	doneOnce       sync.Once
+	closeOnce      sync.Once
+	closeError     error
+	seq            atomic.Int64
+	notifications  chan Notification
+	warnings       chan string
+	http           *httpTransport
+	lifetime       context.Context
+	cancel         context.CancelFunc
+	callTimeout    time.Duration
+	toolsChanged   chan struct{}
+	httpWG         sync.WaitGroup
+	probing        bool
+	probeTransport bool
+	probeID        string
+	listen         *subscription
+	cache          responseCache
+}
+
+type OpenOptions struct {
+	CallTimeout          time.Duration
+	ProbeTimeout         time.Duration
+	MaxInstructionBytes  int
+	skipInstructionLimit bool // supervisor checks the trimmed, attributed value
 }
 
 // Open starts only an explicitly configured command, with direct argv and no
 // shell interpolation. The caller owns approving that configured connection.
 // Tool invocations still need the normal tool permission pipeline above Call.
 func Open(ctx context.Context, cwd string, server state.MCPServer) (*Client, error) {
+	return OpenWithOptions(ctx, cwd, server, OpenOptions{})
+}
+
+func OpenWithOptions(ctx context.Context, cwd string, server state.MCPServer, options OpenOptions) (*Client, error) {
+	if options.CallTimeout == 0 {
+		options.CallTimeout = requestTimeout
+	}
+	if options.MaxInstructionBytes == 0 {
+		options.MaxInstructionBytes = 32768
+	}
+	if options.CallTimeout < 0 || options.MaxInstructionBytes < 1 {
+		return nil, errors.New("invalid MCP connection limits")
+	}
 	if server.Disabled {
 		return nil, errors.New("MCP server is disabled")
 	}
@@ -105,7 +137,12 @@ func Open(ctx context.Context, cwd string, server state.MCPServer) (*Client, err
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{cwd: abs, writer: make(chan struct{}, 1), pending: map[string]chan response{}, done: make(chan struct{}), notifications: make(chan Notification, 64), processDone: make(chan struct{})}
+	return openNegotiated(ctx, abs, server, options)
+}
+
+func startTransport(abs string, server state.MCPServer, options OpenOptions, probing bool) (*Client, error) {
+	var err error
+	c := &Client{cwd: abs, writer: make(chan struct{}, 1), pending: map[string]chan response{}, done: make(chan struct{}), notifications: make(chan Notification, 64), warnings: make(chan string, 64), processDone: make(chan struct{}), callTimeout: options.CallTimeout, toolsChanged: make(chan struct{}, 1), probing: probing, probeTransport: probing && server.Command != ""}
 	c.lifetime, c.cancel = context.WithCancel(context.Background())
 	c.writer <- struct{}{}
 	if server.URL != "" {
@@ -150,34 +187,6 @@ func Open(ctx context.Context, cwd string, server state.MCPServer) (*Client, err
 			c.fail(fmt.Errorf("MCP server exited: %w", err))
 		}()
 	}
-	var init struct {
-		ProtocolVersion string                     `json:"protocolVersion"`
-		Capabilities    map[string]json.RawMessage `json:"capabilities"`
-		ServerInfo      map[string]any             `json:"serverInfo"`
-		Instructions    string                     `json:"instructions"`
-	}
-	err = c.Call(ctx, "initialize", map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"roots": map[string]any{"listChanged": false}}, "clientInfo": map[string]string{"name": "dsgo", "version": "0.1.0-dev"}}, &init)
-	if err != nil {
-		return nil, closeFailedClient(c, err)
-	}
-	if !supportedProtocol(init.ProtocolVersion) {
-		return nil, closeFailedClient(c, fmt.Errorf("unsupported MCP protocol version %q", init.ProtocolVersion))
-	}
-	if len([]byte(init.Instructions)) > 32768 {
-		return nil, closeFailedClient(c, errors.New("MCP server instructions exceed 32768 bytes"))
-	}
-	c.ProtocolVersion = init.ProtocolVersion
-	if c.http != nil {
-		c.http.mu.Lock()
-		c.http.protocol = init.ProtocolVersion
-		c.http.mu.Unlock()
-	}
-	c.Instructions = init.Instructions
-	c.Capabilities = init.Capabilities
-	c.ServerInfo = init.ServerInfo
-	if err := c.notify(ctx, "notifications/initialized", nil); err != nil {
-		return nil, closeFailedClient(c, err)
-	}
 	return c, nil
 }
 
@@ -190,7 +199,7 @@ func closeFailedClient(c *Client, cause error) error {
 
 func supportedProtocol(version string) bool {
 	switch version {
-	case ProtocolVersion, "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05":
+	case ProtocolVersion, "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07":
 		return true
 	}
 	return false
@@ -226,6 +235,8 @@ func scrubEnvironment(overrides map[string]string) []string {
 
 func (c *Client) Notifications() <-chan Notification { return c.notifications }
 func (c *Client) Stderr() string                     { return c.stderr.String() }
+func (c *Client) Done() <-chan struct{}              { return c.done }
+func (c *Client) Err() error                         { c.mu.Lock(); defer c.mu.Unlock(); return c.terminalError }
 
 func (c *Client) fail(err error) {
 	c.doneOnce.Do(func() {
@@ -244,7 +255,18 @@ func (c *Client) fail(err error) {
 }
 
 func (c *Client) Call(ctx context.Context, method string, params any, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	return c.callWithInputDriver(ctx, method, params, out)
+}
+
+func (c *Client) callWithID(ctx context.Context, method string, params any, out any, id json.RawMessage, raw bool) error {
+	timeout := c.callTimeout
+	if raw {
+		timeout = requestTimeout
+	}
+	if timeout == 0 {
+		timeout = requestTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if c.lifetime != nil {
 		stop := context.AfterFunc(c.lifetime, cancel)
@@ -258,18 +280,19 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 		return ErrClosed
 	default:
 	}
-	id := strconv.FormatInt(c.seq.Add(1), 10)
-	input, err := json.Marshal(params)
+	input, err := c.params(params, method == "server/discover" && raw)
 	if err != nil {
 		return err
 	}
-	if params == nil {
-		input = nil
-	}
-	req := wire{JSONRPC: "2.0", ID: json.RawMessage(id), Method: method, Params: input}
+	req := wire{JSONRPC: "2.0", ID: id, Method: method, Params: input}
 	if c.http != nil {
-		return c.httpCall(ctx, req, out)
+		var result json.RawMessage
+		if err := c.httpCall(ctx, req, &result); err != nil {
+			return err
+		}
+		return c.decodeResult(method, result, out, raw)
 	}
+	key := responseKey(id)
 	ch := make(chan response, 1)
 	c.mu.Lock()
 	if c.terminalError != nil {
@@ -277,9 +300,9 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 		c.mu.Unlock()
 		return err
 	}
-	c.pending[id] = ch
+	c.pending[key] = ch
 	c.mu.Unlock()
-	defer func() { c.mu.Lock(); delete(c.pending, id); c.mu.Unlock() }()
+	defer func() { c.mu.Lock(); delete(c.pending, key); c.mu.Unlock() }()
 	if err := c.write(ctx, req); err != nil {
 		return err
 	}
@@ -288,16 +311,11 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 		if answer.Error != nil {
 			return answer.Error
 		}
-		if out != nil {
-			if err := json.Unmarshal(answer.Result, out); err != nil {
-				return fmt.Errorf("decode MCP %s result: %w", method, err)
-			}
-		}
-		return nil
+		return c.decodeResult(method, answer.Result, out, raw)
 	case <-ctx.Done():
-		if method != "initialize" {
+		if method != "initialize" && !raw {
 			cancelCtx, stop := context.WithTimeout(context.Background(), 250*time.Millisecond)
-			_ = c.notify(cancelCtx, "notifications/cancelled", map[string]any{"requestId": json.RawMessage(id), "reason": "request cancelled"})
+			_ = c.notify(cancelCtx, "notifications/cancelled", map[string]any{"requestId": id, "reason": "request cancelled"})
 			stop()
 		}
 		return ctx.Err()
@@ -305,12 +323,9 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 }
 
 func (c *Client) notify(ctx context.Context, method string, params any) error {
-	b, err := json.Marshal(params)
+	b, err := c.params(params, false)
 	if err != nil {
 		return err
-	}
-	if params == nil {
-		b = nil
 	}
 	w := wire{JSONRPC: "2.0", Method: method, Params: b}
 	if c.http != nil {
@@ -323,9 +338,6 @@ func (c *Client) write(ctx context.Context, message wire) error {
 	b, err := json.Marshal(message)
 	if err != nil {
 		return err
-	}
-	if len(b) > maxFrameBytes {
-		return errors.New("MCP message exceeds 8 MiB")
 	}
 	b = append(b, '\n')
 	select {
@@ -362,33 +374,67 @@ func (c *Client) write(ctx context.Context, message wire) error {
 }
 
 func (c *Client) readLoop(r io.Reader) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64<<10), maxFrameBytes)
-	for scanner.Scan() {
-		if err := c.handle(scanner.Bytes(), func(message wire) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-			return c.write(ctx, message)
-		}); err != nil {
-			c.fail(err)
+	chunk := make([]byte, 64<<10)
+	var buffered []byte
+	for {
+		n, readErr := r.Read(chunk)
+		if len(buffered)+n > stdioReadBufferBytes {
+			c.fail(fmt.Errorf("MCP stdio read buffer exceeds %d bytes", stdioReadBufferBytes))
+			go c.Close()
+			return
+		}
+		buffered = append(buffered, chunk[:n]...)
+		for {
+			end := bytes.IndexByte(buffered, '\n')
+			if end < 0 {
+				break
+			}
+			line := bytes.TrimSuffix(buffered[:end], []byte{'\r'})
+			// ReadBuffer skips non-JSON stdout lines, including debug banners.
+			if json.Valid(line) {
+				if err := c.handle(line, func(message wire) error {
+					ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+					defer cancel()
+					return c.write(ctx, message)
+				}); err != nil {
+					// Schema-invalid frames report onerror without closing the SDK
+					// transport; later valid frames must still be delivered.
+					select {
+					case c.warnings <- err.Error():
+					default:
+					}
+				}
+			}
+			buffered = buffered[end+1:]
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				c.fail(fmt.Errorf("read MCP frame: %w", readErr))
+			} else {
+				c.fail(io.EOF)
+			}
 			return
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		c.fail(fmt.Errorf("read MCP frame: %w", err))
-		return
-	}
-	c.fail(io.EOF)
 }
 
 func responseKey(id json.RawMessage) string { return string(bytes.TrimSpace(id)) }
 
 func (c *Client) handle(data []byte, reply func(wire) error) error {
+	c.mu.Lock()
+	probing, probeID := c.probing, c.probeID
+	c.mu.Unlock()
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
+		if probing {
+			return nil
+		}
 		return errors.New("empty MCP JSON-RPC frame")
 	}
 	if trimmed[0] == '[' {
+		if probing {
+			return nil
+		}
 		var messages []json.RawMessage
 		if err := json.Unmarshal(trimmed, &messages); err != nil {
 			return fmt.Errorf("invalid MCP batch: %w", err)
@@ -405,28 +451,47 @@ func (c *Client) handle(data []byte, reply func(wire) error) error {
 	}
 	var message wire
 	if err := json.Unmarshal(trimmed, &message); err != nil {
+		if probing {
+			return nil
+		}
 		return fmt.Errorf("invalid MCP JSON-RPC frame: %w", err)
 	}
+	if probing && (message.Method != "" || responseKey(message.ID) != strconv.Quote(probeID)) {
+		return nil
+	}
 	if message.JSONRPC != "2.0" {
+		if probing {
+			return nil
+		}
 		return errors.New("MCP frame has unsupported JSON-RPC version")
 	}
 	if message.Method != "" {
 		if len(message.ID) != 0 && string(message.ID) != "null" {
+			if c.modern() {
+				return nil
+			}
 			answer := wire{JSONRPC: "2.0", ID: message.ID}
 			switch message.Method {
 			case "ping":
 				answer.Result = json.RawMessage(`{}`)
-			case "roots/list":
-				uri := url.URL{Scheme: "file", Path: filepath.ToSlash(c.cwd)}
-				answer.Result, _ = json.Marshal(map[string]any{"roots": []map[string]string{{"uri": uri.String(), "name": filepath.Base(c.cwd)}}})
 			default:
 				answer.Error = &RPCError{Code: -32601, Message: "client method not supported"}
 			}
 			return reply(answer)
 		}
+		c.invalidateCache(message)
+		if c.routeSubscriptionNotification(message) {
+			return nil
+		}
 		select {
 		case c.notifications <- Notification{Method: message.Method, Params: message.Params}:
 		default:
+		}
+		if message.Method == "notifications/tools/list_changed" && c.toolsChanged != nil && !c.modern() && c.toolsListChanged() {
+			select {
+			case c.toolsChanged <- struct{}{}:
+			default:
+			}
 		}
 		return nil
 	}
@@ -435,6 +500,9 @@ func (c *Client) handle(data []byte, reply func(wire) error) error {
 	}
 	if (message.Error == nil) == (len(message.Result) == 0) {
 		return errors.New("MCP response requires exactly one result or error")
+	}
+	if c.routeSubscriptionResponse(message) {
+		return nil
 	}
 	key := responseKey(message.ID)
 	c.mu.Lock()
@@ -455,8 +523,11 @@ func (c *Client) handle(data []byte, reply func(wire) error) error {
 
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
+		c.closeToolsSubscription()
 		c.fail(ErrClosed)
+		c.cache.reset()
 		if c.http != nil {
+			c.httpWG.Wait()
 			c.closeError = c.http.close()
 			return
 		}
@@ -466,16 +537,22 @@ func (c *Client) Close() error {
 		if c.command == nil {
 			return
 		}
-		select {
-		case <-c.processDone:
-			return
-		case <-time.After(200 * time.Millisecond):
+		if !c.probeTransport {
+			select {
+			case <-c.processDone:
+				return
+			case <-time.After(2 * time.Second):
+			}
 		}
 		_ = signalProcess(c.command, false)
+		grace := 2 * time.Second
+		if c.probeTransport {
+			grace = time.Second
+		}
 		select {
 		case <-c.processDone:
 			return
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(grace):
 		}
 		_ = signalProcess(c.command, true)
 		select {
@@ -515,18 +592,22 @@ type Tool struct {
 }
 
 type discoveredTools struct {
-	specs   []core.ToolSpec
-	outputs map[string]*jsonschema.Schema
-	tasks   map[string]bool
+	specs        []core.ToolSpec
+	outputs      map[string]*jsonschema.Schema
+	outputErrors map[string]error
+	paramHeaders map[string][]paramHeaderDeclaration
+	tasks        map[string]bool
 }
 
 func (c *Client) ListTools(ctx context.Context) ([]core.ToolSpec, error) {
-	set, err := c.discoverTools(ctx)
+	set, err := c.discoverTools(ctx, false)
 	if err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
 	c.outputSchemas = set.outputs
+	c.outputErrors = set.outputErrors
+	c.paramHeaders = set.paramHeaders
 	c.taskRequired = set.tasks
 	c.mu.Unlock()
 	return cloneToolSpecs(set.specs), nil
@@ -542,16 +623,19 @@ func cloneToolSpecs(specs []core.ToolSpec) []core.ToolSpec {
 	return out
 }
 
-func (c *Client) discoverTools(ctx context.Context) (discoveredTools, error) {
+func (c *Client) discoverTools(ctx context.Context, refreshOption ...bool) (discoveredTools, error) {
+	refresh := len(refreshOption) == 0 || refreshOption[0]
 	if _, ok := c.Capabilities["tools"]; !ok {
 		return discoveredTools{specs: []core.ToolSpec{}, outputs: map[string]*jsonschema.Schema{}, tasks: map[string]bool{}}, nil
 	}
-	items, err := c.list(ctx, "tools/list", "tools")
+	items, err := c.cachedList(ctx, "tools/list", "tools", refresh)
 	if err != nil {
 		return discoveredTools{}, err
 	}
 	seen := map[string]bool{}
 	outputs := map[string]*jsonschema.Schema{}
+	outputErrors := map[string]error{}
+	paramHeaders := map[string][]paramHeaderDeclaration{}
 	tasks := map[string]bool{}
 	result := make([]core.ToolSpec, 0, len(items))
 	for _, item := range items {
@@ -559,7 +643,7 @@ func (c *Client) discoverTools(ctx context.Context) (discoveredTools, error) {
 		if err := json.Unmarshal(item, &tool); err != nil {
 			return discoveredTools{}, err
 		}
-		if tool.Name == "" || seen[tool.Name] {
+		if seen[tool.Name] {
 			return discoveredTools{}, fmt.Errorf("invalid or duplicate MCP tool name %q", tool.Name)
 		}
 		seen[tool.Name] = true
@@ -570,20 +654,24 @@ func (c *Client) discoverTools(ctx context.Context) (discoveredTools, error) {
 		if schema["type"] != "object" {
 			return discoveredTools{}, fmt.Errorf("MCP tool %q input schema must be an object", tool.Name)
 		}
-		if _, err := jsonschema.Compile(tool.InputSchema); err != nil {
-			return discoveredTools{}, fmt.Errorf("invalid input schema for MCP tool %q: %w", tool.Name, err)
-		}
+		// The official raw MCP ToolDefinition retains parameters without
+		// compiling or validating them locally. Wire shape validation above
+		// is separate from the server's argument/schema semantics.
 		if len(tool.OutputSchema) > 0 {
 			compiled, err := jsonschema.Compile(tool.OutputSchema)
 			if err != nil {
-				return discoveredTools{}, fmt.Errorf("invalid output schema for MCP tool %q: %w", tool.Name, err)
+				outputErrors[tool.Name] = fmt.Errorf("invalid output schema for MCP tool %q: %w", tool.Name, err)
+			} else {
+				outputs[tool.Name] = compiled
 			}
-			outputs[tool.Name] = compiled
 		}
 		tasks[tool.Name] = tool.Execution.TaskSupport == "required"
+		if c.http != nil && c.modern() {
+			paramHeaders[tool.Name], _ = scanParamHeaders(tool.InputSchema)
+		}
 		result = append(result, core.ToolSpec{Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema})
 	}
-	return discoveredTools{specs: result, outputs: outputs, tasks: tasks}, nil
+	return discoveredTools{specs: result, outputs: outputs, outputErrors: outputErrors, paramHeaders: paramHeaders, tasks: tasks}, nil
 }
 
 func (c *Client) ListResources(ctx context.Context) ([]json.RawMessage, error) {
@@ -600,41 +688,7 @@ func (c *Client) ListResourceTemplates(ctx context.Context) ([]json.RawMessage, 
 }
 
 func (c *Client) list(ctx context.Context, method, key string) ([]json.RawMessage, error) {
-	var result []json.RawMessage
-	cursor := ""
-	seen := map[string]bool{}
-	for page := 0; page < 100; page++ {
-		params := map[string]string{}
-		if cursor != "" {
-			params["cursor"] = cursor
-		}
-		var answer map[string]json.RawMessage
-		if err := c.Call(ctx, method, params, &answer); err != nil {
-			return nil, err
-		}
-		var items []json.RawMessage
-		if err := json.Unmarshal(answer[key], &items); err != nil {
-			return nil, fmt.Errorf("invalid MCP %s page: %w", method, err)
-		}
-		result = append(result, items...)
-		if len(result) > 100000 {
-			return nil, errors.New("MCP discovery exceeds 100000 entries")
-		}
-		cursor = ""
-		if value, ok := answer["nextCursor"]; ok {
-			if err := json.Unmarshal(value, &cursor); err != nil {
-				return nil, err
-			}
-		}
-		if cursor == "" {
-			return result, nil
-		}
-		if seen[cursor] {
-			return nil, errors.New("MCP discovery repeated pagination cursor")
-		}
-		seen[cursor] = true
-	}
-	return nil, errors.New("MCP discovery exceeds 100 pages")
+	return c.cachedList(ctx, method, key, false)
 }
 
 type ToolResult struct {
@@ -646,13 +700,18 @@ type ToolResult struct {
 func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
 	c.mu.Lock()
 	output := c.outputSchemas[name]
+	compileError := c.outputErrors[name]
+	headers := c.paramHeaders[name]
 	required := c.taskRequired[name]
 	c.mu.Unlock()
-	return c.callToolChecked(ctx, name, args, output, required)
+	return c.callToolChecked(withParamHeaders(ctx, headers, args), name, args, output, required, compileError)
 }
 
-func (c *Client) callToolChecked(ctx context.Context, name string, args json.RawMessage, output *jsonschema.Schema, required bool) (ToolResult, error) {
+func (c *Client) callToolChecked(ctx context.Context, name string, args json.RawMessage, output *jsonschema.Schema, required bool, compileError error) (ToolResult, error) {
 	var result ToolResult
+	if compileError != nil {
+		return result, compileError
+	}
 	if required {
 		return result, errors.New("MCP tool requires task-based execution; the official bridge does not support this extension")
 	}
@@ -668,7 +727,7 @@ func (c *Client) callToolChecked(ctx context.Context, name string, args json.Raw
 	if result.IsError {
 		return result, errors.New("MCP server returned isError tool result")
 	}
-	if err := validateToolResult(result); err != nil {
+	if err := validateToolResultForEra(result, c.modern()); err != nil {
 		return ToolResult{}, err
 	}
 	if output != nil {
@@ -683,38 +742,11 @@ func (c *Client) callToolChecked(ctx context.Context, name string, args json.Raw
 }
 
 func validateToolResult(result ToolResult) error {
-	for _, raw := range result.Content {
-		var block map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &block); err != nil || block == nil {
-			return errors.New("invalid MCP content block")
-		}
-		var kind string
-		if json.Unmarshal(block["type"], &kind) != nil || kind == "" {
-			return errors.New("MCP content block is missing its type")
-		}
-		fields := []string{}
-		switch kind {
-		case "text":
-			fields = []string{"text"}
-		case "image", "audio":
-			fields = []string{"data", "mimeType"}
-		case "resource_link":
-			fields = []string{"name", "uri"}
-		}
-		for _, field := range fields {
-			var value string
-			if json.Unmarshal(block[field], &value) != nil || string(block[field]) == "null" {
-				return fmt.Errorf("invalid MCP %s content: %s must be a string", kind, field)
-			}
-		}
-	}
-	if len(result.StructuredContent) > 0 {
-		var object map[string]json.RawMessage
-		if json.Unmarshal(result.StructuredContent, &object) != nil || object == nil {
-			return errors.New("MCP structuredContent must be an object")
-		}
-	}
-	return nil
+	return validateToolResultForEra(result, false)
+}
+
+func validateToolResultForEra(result ToolResult, modern bool) error {
+	return validateResultWire("tools/call", mustJSON(result), modern)
 }
 
 var validServerName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)

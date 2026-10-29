@@ -75,6 +75,13 @@ func Statistics(s Stats) []string {
 	return out
 }
 func Inspector(r Record, tab string) []string {
+	return inspectRecord(r, tab, nil)
+}
+
+func inspectRecord(r Record, tab string, revealed map[string]bool) []string {
+	if tab != "raw" {
+		r = displayUserRecord(r, revealed)
+	}
 	out := []string{fmt.Sprintf("%s · %s · %s", r.Kind, Safe(r.Name), r.Status), fmt.Sprintf("Turn %d / step %d · event %d · %s", r.Turn, r.Step, r.EventSeq, Safe(r.ID))}
 	if r.ParentID != "" {
 		out = append(out, "Parent tool: "+Safe(r.ParentID))

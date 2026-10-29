@@ -16,8 +16,9 @@ import (
 func TestScheduledRecoveryContinuesAcceptedPromptWithoutDuplicatingIt(t *testing.T) {
 	s, _ := state.Open(t.TempDir())
 	session, _ := s.Create(t.TempDir(), "scheduled")
-	input := core.TextMessage("user", "scheduled work")
-	input.DeliveryID = "pending-delivery"
+	// This is the exact no-Source record written by the original Go daemon.
+	input := core.TextMessage("user", "Scheduled reminder (2026-10-27T09:00:00Z):\nscheduled work")
+	input.DeliveryID = "0123456789abcdef0123"
 	_, _ = s.Append(session.ID, "crashed", "turn/started", map[string]any{})
 	_, _ = s.Append(session.ID, "crashed", "user/message", input)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -25,7 +26,7 @@ func TestScheduledRecoveryContinuesAcceptedPromptWithoutDuplicatingIt(t *testing
 	a := &App{store: s, ctx: ctx, out: io.Discard}
 	called := make(chan struct{}, 2)
 	a.engine = agent.New(s, goalModel(func(ctx context.Context, r core.Request, emit func(core.Delta)) (core.Response, error) {
-		if len(r.Messages) != 1 || r.Messages[0].DeliveryID != "pending-delivery" {
+		if len(r.Messages) != 1 || r.Messages[0].DeliveryID != "0123456789abcdef0123" {
 			t.Error("recovery inserted another prompt")
 		}
 		called <- struct{}{}

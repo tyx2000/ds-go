@@ -29,9 +29,7 @@ func (a *App) artifactWarning(err error) {
 	if a.err == nil {
 		return
 	}
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
-	fmt.Fprintf(a.err, "dsgo: artifact preview unavailable: %s\n", clean(err.Error()))
+	a.errorLine("dsgo: artifact preview unavailable: " + clean(err.Error()))
 }
 
 func (a *App) artifactTurn(sessionID, turnID string) (int, string, error) {
@@ -165,7 +163,8 @@ func (a *App) workspaceTurnFinished(ctx context.Context, session core.Session, t
 
 // spillToolResult is for the model-facing top-level copy only, after canonical
 // tool execution has settled. Nested PTC values must never pass through it.
-func (a *App) spillToolResult(ctx context.Context, tc core.ToolContext, name string, result core.ToolResult) (core.ToolResult, error) {
+func (a *App) spillToolResult(ctx context.Context, tc core.ToolContext, name string, result core.ToolResult) (out core.ToolResult, err error) {
+	defer func() { out, err = a.finishJobOutputBound(tc, name, out, err) }()
 	if !result.IsError {
 		if rendered, ok := tools.RenderOfficialFileResult(name, result.Content); ok {
 			result.Meta = json.RawMessage(result.Content)

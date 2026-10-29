@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,8 +44,8 @@ func TestCanonicalReminderToolsAndDelegatedGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	tc.SessionID = child.ID
-	if _, err = a.Execute(a.ctx, tc, "schedule_list", core.JSON(map[string]any{})); err == nil {
-		t.Fatal("delegated child gained reminder control")
+	if result, err = a.Execute(a.ctx, tc, "schedule_list", core.JSON(map[string]any{})); err != nil || !strings.Contains(result.Content, `"code":"subagent_session"`) {
+		t.Fatalf("delegated child refusal was not the official public value: %s %v", result.Content, err)
 	}
 	fork, err := a.store.Fork(parent.ID, 0)
 	if err != nil {
@@ -98,8 +99,12 @@ func TestDaemonAcknowledgesDurableAdmissionBeforeModelCompletion(t *testing.T) {
 	if receipt == "" {
 		t.Fatal("daemon did not commit a delivery receipt")
 	}
+	startDeadline := time.Now().Add(time.Second)
+	for !a.engine.Busy(parent.ID) && time.Now().Before(startDeadline) {
+		time.Sleep(time.Millisecond)
+	}
 	if !a.engine.Busy(parent.ID) {
-		t.Fatal("receipt waited for model completion instead of durable admission")
+		t.Fatal("durably admitted reminder did not start its model turn")
 	}
 	events, err := a.store.Events(parent.ID)
 	if err != nil {
@@ -107,7 +112,7 @@ func TestDaemonAcknowledgesDurableAdmissionBeforeModelCompletion(t *testing.T) {
 	}
 	matched := false
 	for _, ev := range events {
-		if ev.Type == "user/message" && ev.ID == receipt {
+		if (ev.Type == "user/message" || ev.Type == "user/inbox") && ev.ID == receipt {
 			matched = true
 		}
 	}

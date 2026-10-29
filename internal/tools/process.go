@@ -354,6 +354,7 @@ type job struct {
 	waiters                           int           // live waits a settlement releases instead of notifying
 	killedByModel                     bool          // job_kill's result is the model's delivery
 	noticed                           chan struct{} // closed once a completion notice is handled
+	outputLimitBytes                  int           // immutable producer cap; zero leaves model output unbounded
 }
 
 func (j *job) snapshot(offset int, consume bool) map[string]any {

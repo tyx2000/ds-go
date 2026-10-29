@@ -5,100 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"dsgo/internal/core"
 	"dsgo/internal/mcp"
 )
-
-func (a *App) connectMCP() error {
-	names := []string{}
-	for name, cfg := range a.cfg.MCPServers {
-		if !cfg.Disabled {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		client, err := mcp.Open(a.ctx, a.flags.cwd, a.cfg.MCPServers[name])
-		if err != nil {
-			return fmt.Errorf("MCP %s: %w", name, err)
-		}
-		a.mcpClients[name] = client
-		specs, err := client.ListTools(a.ctx)
-		if err != nil {
-			return fmt.Errorf("MCP %s list tools: %w", name, err)
-		}
-		if client.Instructions != "" {
-			a.mcpInstructions += "\nInstructions from configured MCP server " + name + ":\n" + client.Instructions + "\n"
-		}
-		for _, s := range specs {
-			rawName := s.Name
-			public := mcp.PublicToolName(name, rawName)
-			s.Name = public
-			s.Description = "MCP " + name + ": " + s.Description
-			server, connection := name, client
-			if err = a.registry.Register(s, func(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {
-				if err := a.mcpApprove(ctx, tc, server+"/"+rawName, input); err != nil {
-					return core.ToolResult{}, err
-				}
-				result, err := connection.CallTool(ctx, rawName, input)
-				if err != nil && len(result.Content) == 0 {
-					return core.ToolResult{}, err
-				}
-				result.IsError = result.IsError || err != nil
-				return a.projectMCPResult(ctx, tc, rawName, result), nil
-			}); err != nil {
-				return err
-			}
-		}
-	}
-	if len(names) > 0 {
-		return a.registry.Register(toolSpec("mcp_resources", "List or read resources on an explicitly configured MCP server.", `{"type":"object","properties":{"server":{"type":"string"},"action":{"type":"string","enum":["list","templates","read"]},"uri":{"type":"string"}},"required":["server","action"]}`), func(ctx context.Context, tc core.ToolContext, input json.RawMessage) (core.ToolResult, error) {
-			var p struct{ Server, Action, URI string }
-			if err := json.Unmarshal(input, &p); err != nil {
-				return core.ToolResult{}, err
-			}
-			client, ok := a.mcpClients[p.Server]
-			if !ok {
-				return core.ToolResult{}, errors.New("MCP server is not connected")
-			}
-			method := "resources/list"
-			params := map[string]any{}
-			switch p.Action {
-			case "list":
-			case "templates":
-				method = "resources/templates/list"
-			case "read":
-				if p.URI == "" {
-					return core.ToolResult{}, errors.New("resource uri required")
-				}
-				method = "resources/read"
-				params["uri"] = p.URI
-			default:
-				return core.ToolResult{}, errors.New("unknown resource action")
-			}
-			if err := a.mcpApprove(ctx, tc, p.Server+"/"+method, input); err != nil {
-				return core.ToolResult{}, err
-			}
-			if p.Action == "list" {
-				values, err := client.ListResources(ctx)
-				return core.ToolResult{Content: mcp.RenderResourceResult(p.Server, values)}, err
-			}
-			if p.Action == "templates" {
-				values, err := client.ListResourceTemplates(ctx)
-				return core.ToolResult{Content: mcp.RenderResourceResult(p.Server, values)}, err
-			}
-			var out json.RawMessage
-			if err := client.Call(ctx, method, params, &out); err != nil {
-				return core.ToolResult{}, err
-			}
-			return core.ToolResult{Content: mcp.RenderResourceResult(p.Server, out)}, nil
-		})
-	}
-	return nil
-}
 
 func (a *App) mcpApprove(ctx context.Context, tc core.ToolContext, name string, input json.RawMessage) error {
 	if tc.Permission == "full-access" {

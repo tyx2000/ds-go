@@ -474,29 +474,11 @@ func (s *Store) Append(id, turnID, eventType string, data any) (ev core.Event, e
 }
 
 func project(events []core.Event) ([]core.Message, error) {
-	messages := []core.Message{}
-	for _, ev := range events {
-		switch ev.Type {
-		case "user/message", "assistant/message", "tool/result":
-			var m core.Message
-			if err := json.Unmarshal(ev.Data, &m); err != nil {
-				return nil, fmt.Errorf("decode %s event %d: %w", ev.Type, ev.Seq, err)
-			}
-			if (m.Role != "user" && m.Role != "assistant") || len(m.Content) == 0 {
-				return nil, fmt.Errorf("invalid message in event %d", ev.Seq)
-			}
-			messages = append(messages, m)
-		case "context/compacted":
-			var payload struct {
-				Messages []core.Message `json:"messages"`
-			}
-			if err := json.Unmarshal(ev.Data, &payload); err != nil {
-				return nil, fmt.Errorf("decode context event %d: %w", ev.Seq, err)
-			}
-			messages = payload.Messages
-		}
+	nodes, err := core.ContextSurface(events)
+	if err != nil {
+		return nil, err
 	}
-	return messages, nil
+	return core.ContextMessages(nodes), nil
 }
 
 func (s *Store) Messages(id string) ([]core.Message, error) {
@@ -541,6 +523,10 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 		} else if throughSeq > 0 {
 			events = events[:throughSeq]
 		}
+		plan, err := forkPlanState(events)
+		if err != nil {
+			return err
+		}
 		child, err = s.create(parent.CWD, parent.Title+" (fork)")
 		if err != nil {
 			return err
@@ -550,7 +536,7 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 		child.Preset = parent.Preset
 		child.ExecutionMode = parent.ExecutionMode
 		child.Delegated = parent.Delegated
-		child.Plan = parent.Plan
+		child.Plan = plan
 		child.Model = parent.Model
 		child.Thinking = parent.Thinking
 		child.Permission = parent.Permission

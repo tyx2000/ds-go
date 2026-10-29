@@ -39,6 +39,7 @@ type subagentStart struct {
 	Prompt, Description, Mode, CWD   string
 	Provider, Model, ReasoningEffort *string
 	MaxDepth                         int
+	AgentPreset                      *string
 }
 type subagentCatalogEntry struct {
 	Kind   string `json:"kind"`
@@ -48,6 +49,7 @@ type subagentCatalogEntry struct {
 	Reason string `json:"reason,omitempty"`
 	Parent string `json:"parent,omitempty"`
 	Depth  int    `json:"depth,omitempty"`
+	Mode   string `json:"mode,omitempty"`
 }
 
 func (a *App) subagentPolicy(id string) (*subagentPolicy, error) {
@@ -142,6 +144,35 @@ func (a *App) subagentDepth(id string) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		events, err := a.store.Events(id)
+		if err != nil {
+			return 0, err
+		}
+		// The native recursion floor belongs to this session's creation,
+		// never to a fork-inherited prefix. Official manual forks create new
+		// metadata without delegationDepth; actual subagent_fork creation
+		// writes its own parent-depth+1 floor after the inherited marker.
+		own := ownSubagentEvents(events)
+		for i := len(own) - 1; i >= 0; i-- {
+			if own[i].Type != "subagent/delegation-depth" {
+				continue
+			}
+			var recorded struct {
+				Version int  `json:"version"`
+				Depth   *int `json:"depth"`
+			}
+			if err := decodeOfficialObject(own[i].Data, &recorded); err != nil || recorded.Version != 1 || recorded.Depth == nil || *recorded.Depth < 1 || int64(*recorded.Depth) > 9007199254740991 {
+				return 0, errors.New("invalid stored subagent delegation depth")
+			}
+			resolved := int64(depth) + int64(*recorded.Depth)
+			if resolved > 9007199254740991 {
+				return 0, errors.New("subagent delegation depth exceeds safe integer range")
+			}
+			return int(resolved), nil
+		}
+		if len(own) < len(events) {
+			return depth, nil
+		}
 		if !s.Delegated {
 			return depth, nil
 		}
@@ -162,9 +193,9 @@ func (a *App) subagentSpecFor(session core.Session, fork bool) core.ToolSpec {
 		policy, err := a.subagentPolicy(session.ID)
 		enabled = err == nil && policy != nil
 	}
-	return delegationSpec(fork, enabled)
+	return delegationSpec(fork, enabled, a.cfg.SubagentAllowedAgentPresets...)
 }
-func delegationSpec(fork, selection bool) core.ToolSpec {
+func delegationSpec(fork, selection bool, allowedPresets ...string) core.ToolSpec {
 	name, desc, prompt := "subagent", "Delegate a self-contained task in a separate fresh context. The child does not share this conversation. Start returns its id immediately; completion and messages are delivered independently.", "Complete self-contained task, including all needed context."
 	if fork {
 		name, desc, prompt = "subagent_fork", "Delegate work to a child seeded with completed turns of this conversation. The current in-flight turn is excluded. Start returns its id immediately; completion and messages are delivered independently.", "The task; the child already sees completed turns, so state what is new."
@@ -176,12 +207,15 @@ func delegationSpec(fork, selection bool) core.ToolSpec {
 		properties["model"] = map[string]any{"type": "string"}
 		properties["reasoning_effort"] = map[string]any{"type": "string"}
 	}
+	if !fork && len(allowedPresets) > 0 {
+		properties["agent_preset"] = map[string]any{"type": "string", "enum": allowedPresets, "description": "Independent child preset; omission uses the configured default or the parent's current preset."}
+	}
 	return core.ToolSpec{Name: name, Description: desc, InputSchema: core.JSON(map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": []string{"description", "prompt"}})}
 }
 func (a *App) registerSubagentTools() error {
 	for _, fork := range []bool{false, true} {
 		isFork := fork
-		if err := a.registry.Register(delegationSpec(isFork, !isFork), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
+		if err := a.registry.Register(delegationSpec(isFork, !isFork, a.cfg.SubagentAllowedAgentPresets...), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 			return a.delegateOfficial(ctx, tc, raw, isFork)
 		}); err != nil {
 			return err
@@ -203,6 +237,7 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 		Provider    *string `json:"provider"`
 		Model       *string `json:"model"`
 		Effort      *string `json:"reasoning_effort"`
+		AgentPreset *string `json:"agent_preset"`
 	}
 	if err := decodeOfficialObject(raw, &p); err != nil {
 		return core.ToolResult{}, err
@@ -212,7 +247,7 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 	}
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &fields)
-	for _, name := range []string{"cwd", "provider", "model", "reasoning_effort"} {
+	for _, name := range []string{"cwd", "provider", "model", "reasoning_effort", "agent_preset"} {
 		if v, ok := fields[name]; ok && string(v) == "null" {
 			return core.ToolResult{}, fmt.Errorf("%s must be a string", name)
 		}
@@ -233,6 +268,24 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 	}
 	if fork && (p.Provider != nil || p.Model != nil || p.Effort != nil) {
 		return core.ToolResult{}, errors.New("subagent_fork does not expose child LLM selection")
+	}
+	var preset *string
+	if !fork && a.cfg.SubagentAgentPreset != "" {
+		selected := a.cfg.SubagentAgentPreset
+		preset = &selected
+	}
+	if p.AgentPreset != nil {
+		if fork {
+			return core.ToolResult{}, errors.New("subagent_fork does not support agent_preset")
+		}
+		allowed := false
+		for _, id := range a.cfg.SubagentAllowedAgentPresets {
+			allowed = allowed || id == *p.AgentPreset
+		}
+		if !allowed {
+			return core.ToolResult{}, errors.New("agent_preset is not in the configured child preset allowlist")
+		}
+		preset = p.AgentPreset
 	}
 	if p.Provider != nil || p.Effort != nil {
 		policy, err := a.subagentPolicy(tc.SessionID)
@@ -273,7 +326,7 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 			return core.ToolResult{}, errors.New("reasoning_effort must be non-empty")
 		}
 	}
-	req := subagentStart{Prompt: *p.Prompt, Description: *p.Description, Mode: "fresh", Provider: p.Provider, Model: p.Model, ReasoningEffort: p.Effort, MaxDepth: maxDepth}
+	req := subagentStart{Prompt: *p.Prompt, Description: *p.Description, Mode: "fresh", Provider: p.Provider, Model: p.Model, ReasoningEffort: p.Effort, MaxDepth: maxDepth, AgentPreset: preset}
 	if p.CWD != nil {
 		req.CWD = *p.CWD
 	}
@@ -353,7 +406,11 @@ func (a *App) listAgentsOfficial(ctx context.Context, tc core.ToolContext, raw j
 		if scope == "descendants" {
 			at = fmt.Sprintf(" parent=%s depth=%d", row.Parent, row.Depth)
 		}
-		lines[i] = fmt.Sprintf("%s [%s]%s — %s", row.ID, row.Status, at, row.Label)
+		if row.Kind == "diagnostic" {
+			lines[i] = fmt.Sprintf("%s [%s]%s", row.ID, row.Reason, at)
+		} else {
+			lines[i] = fmt.Sprintf("%s [%s]%s — %s", row.ID, row.Status, at, row.Label)
+		}
 	}
 	text := strings.Join(lines, "\n")
 	if len(rows) == 0 {
@@ -501,8 +558,23 @@ func (m *agents) spawnOfficial(ctx context.Context, tc core.ToolContext, req sub
 		if req.ReasoningEffort != nil {
 			s.Thinking = *req.ReasoningEffort
 		}
+		if req.AgentPreset != nil {
+			if req.Mode == "fork" || !validChildPreset(*req.AgentPreset) {
+				return errors.New("unsupported independent child preset")
+			}
+			s.Preset = *req.AgentPreset
+			s.ExecutionMode = "native"
+			if s.Preset == "ptc" {
+				s.ExecutionMode = "ptc"
+			}
+		}
 		if err = m.app.store.Update(s); err != nil {
 			return err
+		}
+		if req.AgentPreset != nil {
+			if _, err = m.app.store.Append(id, "", "agent-preset/selected", map[string]any{"agentPreset": *req.AgentPreset}); err != nil {
+				return err
+			}
 		}
 		if err = m.app.inheritSubagentPolicy(tc.SessionID, id); err != nil {
 			return err
@@ -534,12 +606,52 @@ func (m *agents) sendOfficial(ctx context.Context, sender, target, text string) 
 	toChild := ok && t.ParentID == sender
 	s, ok := m.children[sender]
 	toParent := ok && s.ParentID == target && s.Status == "running"
-	m.mu.Unlock()
-	if !toChild && !toParent {
-		return "", fmt.Errorf("agent %s is not your direct continuable child or your direct parent", target)
-	}
 	message := core.Message{Role: "user", Content: []core.Block{{Type: "text", Text: "Agent " + sender + " sent a message: "}, {Type: "text", Text: text}}, Source: map[string]any{"kind": "agent", "agentId": sender}}
-	return m.deliver(ctx, target, message, false)
+	if toParent {
+		m.mu.Unlock()
+		return m.deliver(ctx, target, message, false)
+	}
+	defer m.mu.Unlock()
+	restored := false
+	if !toChild {
+		var err error
+		t, err = m.restoreChildLocked(ctx, sender, target)
+		if err != nil {
+			return "", err
+		}
+		restored = true
+	}
+	id, err := m.deliverChildLocked(ctx, t, message, false)
+	if err != nil && restored {
+		delete(m.children, target)
+		t.cancel()
+	}
+	return id, err
+}
+
+func (m *agents) deliverChildLocked(ctx context.Context, c *child, message core.Message, settlement bool) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if m.closing {
+		return "", errManagerClosing
+	}
+	if m.isDrainingLocked(c.ID) {
+		return "", errors.New("subagent subtree is being disposed")
+	}
+	stopping := c.Status == "running" && c.ctx.Err() != nil
+	full := c.Status != "running" && m.activeInTreeLocked(c.ID) >= m.max
+	if !settlement && stopping {
+		return "", errors.New("subagent is stopping; wait before sending a message")
+	}
+	if !settlement && full {
+		return "", fmt.Errorf("maximum of %d active subagents reached", m.max)
+	}
+	id, err := m.app.engine.Inbox(ctx, c.ID, message)
+	if err == nil && c.Status != "running" && !full && !(settlement && (c.torndown || m.wakePaused[c.ID])) {
+		m.resumeLocked(c, nil)
+	}
+	return id, err
 }
 
 // deliver commits a message for target. A running child admits it at its
@@ -553,20 +665,7 @@ func (m *agents) deliver(ctx context.Context, target string, message core.Messag
 	}
 	if c, ok := m.children[target]; ok {
 		defer m.mu.Unlock()
-		stopping := c.Status == "running" && c.ctx.Err() != nil
-		full := c.Status != "running" && m.active >= m.max
-		if !settlement && stopping {
-			return "", errors.New("subagent is stopping; wait before sending a message")
-		}
-		if !settlement && full {
-			return "", fmt.Errorf("maximum of %d active subagents reached", m.max)
-		}
-		// Committing under mu orders this against the child's end-of-turn check.
-		id, err := m.app.engine.Inbox(ctx, target, message)
-		if err == nil && c.Status != "running" && !full && !(settlement && (c.torndown || m.wakePaused[target])) {
-			m.resumeLocked(c, nil)
-		}
-		return id, err
+		return m.deliverChildLocked(ctx, c, message, settlement)
 	}
 	if m.wakePaused[target] {
 		defer m.mu.Unlock()
@@ -610,6 +709,10 @@ func (m *agents) notifySettled(id, parent, status, errText string) {
 	defer func() {
 		m.mu.Lock()
 		m.waking--
+		m.settling[id]--
+		if m.settling[id] == 0 {
+			delete(m.settling, id)
+		}
 		m.mu.Unlock()
 	}()
 	if _, err := m.deliver(m.app.ctx, parent, m.app.settlementMessage(id, status, errText), true); err != nil && !errors.Is(err, errManagerClosing) && m.app.ctx.Err() == nil {
@@ -635,56 +738,121 @@ func (m *agents) interruptOfficial(caller, target string) error {
 	return fmt.Errorf("agent %s is not a subagent started under you", target)
 }
 
-// catalogOfficial lists this process's children in start order: direct
-// children, or every descendant depth-first with its parent and depth.
+// catalogOfficial observes parent-owned facts without resuming children. A
+// recursive read visits each catalog once and isolates unavailable branches.
 func (m *agents) catalogOfficial(ctx context.Context, parent string, descendants bool) ([]subagentCatalogEntry, error) {
-	if err := ctx.Err(); err != nil {
+	facts, err := m.readCatalog(ctx, parent)
+	if err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	rows := []subagentCatalogEntry{}
-	var walk func(string, int)
-	walk = func(id string, depth int) {
-		var kids []*child
-		for _, c := range m.children {
-			if c.ParentID == id {
-				kids = append(kids, c)
+	seen := map[string]bool{parent: true}
+	var walk func(string, int, []subagentCatalogFact) error
+	walk = func(id string, depth int, facts []subagentCatalogFact) error {
+		for _, fact := range facts {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-		}
-		sort.Slice(kids, func(i, j int) bool { return kids[i].seq < kids[j].seq })
-		for _, c := range kids {
-			row := subagentCatalogEntry{Kind: "child", ID: c.ID, Label: c.Label, Status: "inactive"}
-			if c.Status == "running" {
-				row.Status = "running"
-			}
-			if !descendants {
-				rows = append(rows, row)
+			if seen[fact.ChildID] {
 				continue
 			}
-			row.Parent, row.Depth = id, depth
+			seen[fact.ChildID] = true
+			row := subagentCatalogEntry{Kind: "child", ID: fact.ChildID, Label: fact.Label, Mode: fact.Mode, Status: "inactive"}
+			m.mu.Lock()
+			if c := m.children[fact.ChildID]; c != nil && c.ParentID == id && c.Status == "running" {
+				row.Status = "running"
+			}
+			m.mu.Unlock()
+			var children []subagentCatalogFact
+			if descendants {
+				row.Parent, row.Depth = id, depth
+				if fact.Mode != "external" {
+					var err error
+					children, err = m.readCatalog(ctx, fact.ChildID)
+					if err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						row.Kind, row.Reason, row.Status = "diagnostic", "unavailable", ""
+						if strings.Contains(err.Error(), "corrupt") || strings.Contains(err.Error(), "decode") || strings.Contains(err.Error(), "invalid") {
+							row.Reason = "corrupt"
+						}
+						rows = append(rows, row)
+						continue
+					}
+				}
+			}
+			if fact.Mode == "unknown" {
+				row.Kind, row.Reason, row.Status = "diagnostic", "unsupported", ""
+			}
 			rows = append(rows, row)
-			walk(c.ID, depth+1)
+			if descendants {
+				if err := walk(fact.ChildID, depth+1, children); err != nil {
+					return err
+				}
+			}
 		}
+		return nil
 	}
-	walk(parent, 1)
-	return rows, nil
+	err = walk(parent, 1, facts)
+	return rows, err
 }
 
 // settle waits until parent has no running descendant or background job, no
 // pending notice and no woken turn, so a one-shot run collects its work.
+func (m *agents) waitProgressingChildren(ctx context.Context, parent string) error {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		m.mu.Lock()
+		busy := false
+		for _, id := range m.descendantsLocked(parent) {
+			busy = busy || m.children[id].Status == "running"
+		}
+		for _, reservation := range m.reservations {
+			busy = busy || m.belongsLocked(reservation.parent, parent)
+		}
+		for id, count := range m.settling {
+			busy = busy || (id != parent && count > 0 && m.belongsLocked(id, parent))
+		}
+		for _, wake := range m.wakeRuns {
+			busy = busy || (wake.target != parent && m.belongsLocked(wake.target, parent))
+		}
+		m.mu.Unlock()
+		if !busy {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (m *agents) settle(ctx context.Context, parent string) error {
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		m.mu.Lock()
-		busy := m.waking > 0
+		busy := false
 		owners := append(m.descendantsLocked(parent), parent)
 		for _, id := range owners[:len(owners)-1] {
 			busy = busy || m.children[id].Status == "running"
 		}
+		for id, count := range m.settling {
+			busy = busy || (count > 0 && m.belongsLocked(id, parent))
+		}
+		for _, wake := range m.wakeRuns {
+			busy = busy || m.belongsLocked(wake.target, parent)
+		}
+		for _, reservation := range m.reservations {
+			busy = busy || m.belongsLocked(reservation.parent, parent)
+		}
 		m.mu.Unlock()
-		busy = busy || m.app.registry.HasPendingJobs(owners...) || m.app.workflowNotices.busy()
+		for _, owner := range owners {
+			busy = busy || m.app.registry.HasPendingSessionJobs(owner) || m.app.workflowNotices.busyOwner(owner)
+		}
 		if !busy && !m.app.engine.Busy(parent) {
 			return nil
 		}
@@ -755,7 +923,25 @@ func (a *App) closingText(id string) []core.Block {
 func (a *App) settleDelegations() error {
 	ctx, stop := signalContext(a.ctx)
 	defer stop()
-	err := a.manager.settle(ctx, a.session.ID)
+	var err error
+	for {
+		if err = a.manager.settle(ctx, a.session.ID); err != nil {
+			break
+		}
+		if err = a.waitGoalDrivers(ctx, a.session.ID); err != nil {
+			break
+		}
+		// A final goal round can leave ordinary owned work or its delivery.
+		if err = a.manager.settle(ctx, a.session.ID); err != nil {
+			break
+		}
+		a.goals.mu.Lock()
+		driving := a.goals.drivers[a.session.ID] != nil
+		a.goals.mu.Unlock()
+		if !driving && !a.engine.Busy(a.session.ID) {
+			break
+		}
+	}
 	if err != nil && a.ctx.Err() == nil {
 		a.manager.cancelChildren(a.session.ID)
 		a.cancel()

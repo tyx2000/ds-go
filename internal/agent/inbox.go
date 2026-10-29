@@ -86,8 +86,18 @@ func (e *Engine) Inbox(ctx context.Context, id string, message core.Message) (st
 	if _, err := e.Store.Get(id); err != nil {
 		return "", err
 	}
+	unlockInput := func() {}
+	if structured := e.structuredRun(id); structured != nil {
+		structured.mu.Lock()
+		if !structured.acceptsInputLocked() {
+			structured.mu.Unlock()
+			return "", errors.New("structured output already staged: input is closed")
+		}
+		unlockInput = structured.mu.Unlock
+	}
 	entry := inboxEntry{ID: ID(), Message: message}
 	event, err := e.Store.Append(id, "", "user/inbox", entry)
+	unlockInput()
 	if err != nil {
 		return "", err
 	}
@@ -110,9 +120,9 @@ func (e *Engine) pendingInbox(id string) ([]inboxEntry, error) {
 	var pending []inboxEntry
 	for _, event := range events {
 		switch event.Type {
-		case "user/message":
-			var message core.Message
-			if err := json.Unmarshal(event.Data, &message); err != nil {
+		case "user/message", "user/input":
+			message, _, err := inputEventMessage(event)
+			if err != nil {
 				return nil, err
 			}
 			if message.DeliveryID != "" {
@@ -143,7 +153,7 @@ func (e *Engine) PendingInbox(id string) (bool, error) {
 	return len(entries) > 0, err
 }
 
-func (e *Engine) admitInbox(id, turn string) (bool, error) {
+func (e *Engine) admitInbox(ctx context.Context, id, turn string) (bool, error) {
 	entries, err := e.pendingInbox(id)
 	if err != nil {
 		return false, err
@@ -151,11 +161,10 @@ func (e *Engine) admitInbox(id, turn string) (bool, error) {
 	for _, entry := range entries {
 		message := entry.Message
 		message.DeliveryID = "inbox:" + entry.ID
-		event, err := e.Store.Append(id, turn, "user/message", message)
+		_, err := e.appendInput(ctx, id, turn, message)
 		if err != nil {
 			return false, err
 		}
-		e.emit(id, "event", event)
 	}
 	return len(entries) > 0, nil
 }

@@ -39,7 +39,7 @@ Web 配置中的 `desktop-product-telemetry`、`product-analytics`、`ui-sidebar
 | `session-title`、`session-title-llm` | 首次提示的本地标题回退；`/rename` | **部分**。存在标题路径 | 未移植官方首轮 LLM 标题生成、字节上限和全部标题更新规则 |
 | `session-query-sqlite`、`session-projection`、`session-projection-cache`、`storage*` | `sessions list/search/show`、`/sessions 查询`、`/history`、`/status`；Go JSON 元数据/事件投影 | **部分**。支持标题/工作目录子串检索；自有存储和模型历史投影已测 | 全部投影与缓存行为尚未齐全；默认 Web 全文搜索原本关闭，不能把未默认启用的全文索引当作默认已提供 |
 | `token-meter`、`compaction-basic`、`command-compact`、`tool-result-pruner`、`image-offload` | `/compact`、自动摘要压缩、usage 事件 | **部分**。压缩事件可重建模型上下文 | 当前阈值含字节估计；官方精确计量、结果剪枝、旧图片卸载/重试、提示词与失败策略未完整对齐 |
-| `agent-instructions`、`system-prompt`、预设 `persona`、`time-context` | 祖先 `AGENTS.md`、工作区上下文、当前时间工具和固定终端提示词 | **部分**。`internal/context` 已实现指令和技能发现 | 指令/技能发现边界、YAML frontmatter、时间段提示和所有预设 persona 尚未全量差分；下级 `AGENTS.md` 当前主要通过提示要求模型读取 |
+| `agent-instructions`、`system-prompt`、预设 `persona`、`time-context` | standard/ptc/cordis 首次请求前追加官方格式的指令基线（用户级与项目级 `AGENTS.md` 链）；每个进程对恢复的会话核对一次，变化时追加完整替换；每步前按官方格式追加时间读数（默认 10 分钟间隔，`time_context` 可配置时区与间隔）；固定终端提示词 | **部分／局部验证**。渲染器与官方源码 98 例 golden 一致（`instruction_render_test.go`）；基线持久化、恢复核对、替换与空链、minimal 不注入（`instructions_test.go`）；时间读数格式、刷新间隔、跨回合基准、未知时区（`time_context_test.go`） | 文件操作后发现更深层指令、变更/移除提示尚未接线，系统提示词暂保留“修改前读取子目录 AGENTS.md”的提醒；终端以本机或配置时区代替浏览器时区；预设 persona 与系统提示段未全量差分 |
 
 ## 文件、执行、权限和产物
 

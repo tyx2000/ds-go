@@ -1,0 +1,2875 @@
+{
+  "baseline": {
+    "sdk": "@modelcontextprotocol/client@2.2.0",
+    "sdkCommit": "dd22ba25ddbe7cd8822e1fe9c738a974996a28f6",
+    "zod": "4.4.3",
+    "scope": "fixed SDK default bridge result schemas; no entire-registry parity claim"
+  },
+  "cases": [
+    {
+      "name": "base64-0",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-1",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-2",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-3",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zm8",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-4",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Z h == \n",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-5",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zh==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-6",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Z",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-7",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg=",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-8",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg===",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-9",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg__",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-10",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "***",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-11",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg\u000b==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "text-empty",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-content",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "future",
+            "text": "x"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "missing-text",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "null-text",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "boolean-isError",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [],
+        "isError": "true"
+      },
+      "valid": false
+    },
+    {
+      "name": "extra-content-fields",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "extension": {
+              "a": 1
+            }
+          }
+        ],
+        "extension": []
+      },
+      "valid": true
+    },
+    {
+      "name": "null-meta",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [],
+        "_meta": null
+      },
+      "valid": false
+    },
+    {
+      "name": "object-meta",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [],
+        "_meta": {
+          "vendor": {
+            "a": 1
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "structured-primitive",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [],
+        "structuredContent": false
+      },
+      "valid": false
+    },
+    {
+      "name": "structured-null",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [],
+        "structuredContent": null
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-22",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": [
+                "user",
+                "assistant"
+              ],
+              "priority": 0.5,
+              "lastModified": "2024-02-29T12:30Z"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "annotations-23",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2023-02-29T12:30Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-24",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T23:59:59.123+23:59"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "annotations-25",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T24:00:00Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-26",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T12:30:60Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-27",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T12:30:00+0800"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-28",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "priority": 1.1
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-29",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": [
+                "system"
+              ]
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-30",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": null
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-31",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-32",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-33",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "blob": "Zg"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-34",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "blob": "Zg"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-35",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "blob": "Z"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-36",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "blob": "Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-37",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "text": "ok"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-38",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "text": "ok"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-39",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "text": 5
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-40",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": 5
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-41",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "text": 5,
+            "blob": "Zg=="
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-42",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": 5,
+              "blob": "Zg=="
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-43",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok",
+            "blob": "***"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-44",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok",
+              "blob": "***"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-45",
+      "era": "legacy",
+      "method": "resources/read",
+      "value": {
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok",
+            "_meta": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-46",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok",
+              "_meta": []
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-47",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "",
+            "uri": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-48",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "",
+            "uri": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-49",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "n"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-50",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-51",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": null,
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-52",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": null,
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-53",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "size": -1.5
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-54",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "size": -1.5
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-55",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "data:x",
+                "sizes": [
+                  "20x20"
+                ],
+                "theme": "dark"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-56",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "data:x",
+                "sizes": [
+                  "20x20"
+                ],
+                "theme": "dark"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-57",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "x",
+                "theme": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-58",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "x",
+                "theme": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-59",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "description": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-60",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "description": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "template-valid",
+      "era": "legacy",
+      "method": "resources/templates/list",
+      "value": {
+        "resourceTemplates": [
+          {
+            "name": "n",
+            "uriTemplate": "r/{name}"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "template-uri-wrong",
+      "era": "legacy",
+      "method": "resources/templates/list",
+      "value": {
+        "resourceTemplates": [
+          {
+            "name": "n",
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-63",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-64",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "array"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-65",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-66",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "properties": []
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-67",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "$schema": 3
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-68",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": {}
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-69",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": {
+              "type": "number"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-70",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": true
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-71",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "annotations": {
+              "readOnlyHint": 1
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-72",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "execution": {
+              "taskSupport": "future"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "cursor-null",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [],
+        "nextCursor": null
+      },
+      "valid": false
+    },
+    {
+      "name": "cursor-empty",
+      "era": "legacy",
+      "method": "tools/list",
+      "value": {
+        "tools": [],
+        "nextCursor": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-75",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-76",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-77",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-78",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zm8",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-79",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Z h == \n",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-80",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zh==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "base64-81",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Z",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-82",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg=",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-83",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg===",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-84",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg__",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-85",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "***",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "base64-86",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "image",
+            "data": "Zg\u000b==",
+            "mimeType": "image/test"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "text-empty",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "unknown-content",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "future",
+            "text": "x"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "missing-text",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "null-text",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "boolean-isError",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [],
+        "isError": "true"
+      },
+      "valid": false
+    },
+    {
+      "name": "extra-content-fields",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "extension": {
+              "a": 1
+            }
+          }
+        ],
+        "extension": []
+      },
+      "valid": true
+    },
+    {
+      "name": "null-meta",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [],
+        "_meta": null
+      },
+      "valid": false
+    },
+    {
+      "name": "object-meta",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [],
+        "_meta": {
+          "vendor": {
+            "a": 1
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "structured-primitive",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [],
+        "structuredContent": false
+      },
+      "valid": true
+    },
+    {
+      "name": "structured-null",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [],
+        "structuredContent": null
+      },
+      "valid": true
+    },
+    {
+      "name": "annotations-97",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": [
+                "user",
+                "assistant"
+              ],
+              "priority": 0.5,
+              "lastModified": "2024-02-29T12:30Z"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "annotations-98",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2023-02-29T12:30Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-99",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T23:59:59.123+23:59"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "annotations-100",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T24:00:00Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-101",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T12:30:60Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-102",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "lastModified": "2024-01-01T12:30:00+0800"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-103",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "priority": 1.1
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-104",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": [
+                "system"
+              ]
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "annotations-105",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "text",
+            "text": "ok",
+            "annotations": {
+              "audience": null
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-106",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-107",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-108",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "blob": "Zg"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-109",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "blob": "Zg"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-110",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "blob": "Z"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-111",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "blob": "Z"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-112",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "text": "ok"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-113",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "text": "ok"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-114",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "text": 5
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-115",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": 5
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-contents-116",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "text": 5,
+            "blob": "Zg=="
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-117",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": 5,
+              "blob": "Zg=="
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-118",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok",
+            "blob": "***"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "embedded-119",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok",
+              "blob": "***"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-contents-120",
+      "era": "modern",
+      "method": "resources/read",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "contents": [
+          {
+            "uri": "r",
+            "text": "ok",
+            "_meta": []
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "embedded-121",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "r",
+              "text": "ok",
+              "_meta": []
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-122",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "",
+            "uri": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-123",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "",
+            "uri": ""
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-124",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "n"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-125",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-126",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": null,
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-127",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": null,
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-128",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "size": -1.5
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-129",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "size": -1.5
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-130",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "data:x",
+                "sizes": [
+                  "20x20"
+                ],
+                "theme": "dark"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-link-131",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "data:x",
+                "sizes": [
+                  "20x20"
+                ],
+                "theme": "dark"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "resource-list-132",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "x",
+                "theme": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-133",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "icons": [
+              {
+                "src": "x",
+                "theme": "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-list-134",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resources": [
+          {
+            "name": "n",
+            "uri": "r",
+            "description": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-link-135",
+      "era": "modern",
+      "method": "tools/call",
+      "value": {
+        "resultType": "complete",
+        "content": [
+          {
+            "type": "resource_link",
+            "name": "n",
+            "uri": "r",
+            "description": null
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "template-valid",
+      "era": "modern",
+      "method": "resources/templates/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resourceTemplates": [
+          {
+            "name": "n",
+            "uriTemplate": "r/{name}"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "template-uri-wrong",
+      "era": "modern",
+      "method": "resources/templates/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "resourceTemplates": [
+          {
+            "name": "n",
+            "uri": "r"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-138",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-139",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "array"
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-140",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "required": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-141",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "properties": []
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-142",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object",
+              "$schema": 3
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-143",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": {}
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-144",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": {
+              "type": "number"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "tools-list-145",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "outputSchema": true
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-146",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "annotations": {
+              "readOnlyHint": 1
+            }
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "tools-list-147",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [
+          {
+            "name": "n",
+            "inputSchema": {
+              "type": "object"
+            },
+            "execution": {
+              "taskSupport": "future"
+            }
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "cursor-null",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [],
+        "nextCursor": null
+      },
+      "valid": false
+    },
+    {
+      "name": "cursor-empty",
+      "era": "modern",
+      "method": "tools/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private",
+        "tools": [],
+        "nextCursor": ""
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy-content-default-150",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {},
+      "valid": true
+    },
+    {
+      "name": "legacy-content-default-151",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "structuredContent": {
+          "n": 1
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy-content-default-152",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "isError": true
+      },
+      "valid": true
+    },
+    {
+      "name": "legacy-foreign-content-153",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "task": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-foreign-content-154",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "requestState": "state"
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-foreign-content-155",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "inputRequests": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy-foreign-content-156",
+      "era": "legacy",
+      "method": "tools/call",
+      "value": {
+        "content": null
+      },
+      "valid": false
+    },
+    {
+      "name": "invalid-ttl-157",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": -1,
+        "cacheScope": "private",
+        "resources": []
+      },
+      "valid": false
+    },
+    {
+      "name": "invalid-ttl-158",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 1.5,
+        "cacheScope": "private",
+        "resources": []
+      },
+      "valid": false
+    },
+    {
+      "name": "invalid-ttl-159",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 9007199254740992,
+        "cacheScope": "private",
+        "resources": []
+      },
+      "valid": false
+    },
+    {
+      "name": "ttl-required",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "cacheScope": "private",
+        "resources": []
+      },
+      "valid": false
+    },
+    {
+      "name": "scope-required",
+      "era": "modern",
+      "method": "resources/list",
+      "value": {
+        "resultType": "complete",
+        "ttlMs": 0,
+        "resources": []
+      },
+      "valid": false
+    },
+    {
+      "name": "initialize-162",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {}
+      },
+      "valid": true
+    },
+    {
+      "name": "discover-163",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {}
+      },
+      "valid": true
+    },
+    {
+      "name": "initialize-164",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "discover-165",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "initialize-166",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": "true"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "discover-167",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {
+          "tools": {
+            "listChanged": "true"
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "initialize-168",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {
+          "resources": {
+            "subscribe": null
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "discover-169",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {
+          "resources": {
+            "subscribe": null
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "initialize-170",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {
+          "experimental": {
+            "vendor": {}
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "discover-171",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {
+          "experimental": {
+            "vendor": {}
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "initialize-172",
+      "era": "legacy",
+      "method": "initialize",
+      "value": {
+        "protocolVersion": "2025-11-25",
+        "serverInfo": {
+          "name": "s",
+          "version": "v"
+        },
+        "capabilities": {
+          "experimental": {
+            "vendor": false
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "discover-173",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {
+          "experimental": {
+            "vendor": false
+          }
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "discover-invalid-hints",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {},
+        "ttlMs": -3,
+        "cacheScope": []
+      },
+      "valid": true
+    },
+    {
+      "name": "discover-bad-info-ignored",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {},
+        "_meta": {
+          "io.modelcontextprotocol/serverInfo": {
+            "name": 3
+          }
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "discover-null-instructions",
+      "era": "modern",
+      "method": "server/discover",
+      "value": {
+        "supportedVersions": [
+          "2026-07-28"
+        ],
+        "capabilities": {},
+        "instructions": null
+      },
+      "valid": false
+    },
+    {
+      "name": "resource-size-infinite",
+      "era": "legacy",
+      "method": "resources/list",
+      "value": {
+        "resources": [
+          {
+            "name": "r",
+            "uri": "r",
+            "size": 1e309
+          }
+        ]
+      },
+      "valid": false
+    }
+  ]
+}

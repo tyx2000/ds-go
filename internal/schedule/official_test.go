@@ -283,8 +283,10 @@ func TestOfficialDelegatedAdmissionAndArchiveStop(t *testing.T) {
 	_, err := s.CreateOfficial(context.Background(), "child", CreateRequest{Title: "New", Prompt: "p", TimingInput: TimingInput{AfterSeconds: pointer(int64(60))}})
 	expectCode(t, err, "subagent_session")
 	expected, _ := s.GetRecord(context.Background(), "child", child.ID)
-	_, err = s.UpdateOfficial(context.Background(), "child", child.ID, expected, UpdatePatch{Title: pointer("Changed")})
-	expectCode(t, err, "subagent_session")
+	refused, err := s.UpdateOfficial(context.Background(), "child", child.ID, expected, UpdatePatch{Title: pointer("Changed")})
+	if err != nil || refused.Updated || refused.Code != "subagent_session" {
+		t.Fatalf("delegated update: %+v %v", refused, err)
+	}
 	list, err := s.ListOfficial(context.Background(), "child")
 	if err != nil || len(list) != 1 {
 		t.Fatal("historical child task became unmanageable")

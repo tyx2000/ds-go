@@ -16,12 +16,14 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"dsgo/internal/agent"
 	"dsgo/internal/attachments"
 	instructions "dsgo/internal/context"
 	"dsgo/internal/core"
 	"dsgo/internal/mcp"
+	"dsgo/internal/reference"
 	"dsgo/internal/schedule"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
@@ -51,48 +53,72 @@ func (f *flags) bind(fs *flag.FlagSet) {
 }
 
 type App struct {
-	in              *bufio.Reader
-	out, err        io.Writer
-	flags           flags
-	store           *state.Store
-	cfg             state.Config
-	registry        *tools.Registry
-	engine          *agent.Engine
-	schedules       *schedule.Store
-	skills          []instructions.Skill
-	session         core.Session
-	writeMu         sync.Mutex
-	editor          *tui.LineEditor // nil unless stdin and stdout are terminals
-	inputMu         sync.Mutex
-	inputOnce       sync.Once
-	reads           chan inputRequest
-	manager         *agents
-	ctx             context.Context
-	cancel          context.CancelFunc
-	multiline       bool
-	plan            atomic.Bool
-	current         atomic.Value
-	attachments     []core.Block
-	attachmentStore *attachments.Store
-	mcpClients      map[string]*mcp.Client
-	mcpInstructions string
-	unattended      bool
-	receipts        sync.Map
-	background      sync.WaitGroup
-	streamKinds     sync.Map
-	workflows       *workflow.Engine
-	workflowNotices workflowJobNotices
-	signalMu        sync.Mutex
-	signalRefs      int
-	signalStop      func()
-	foreground      sync.Map // session id -> *foregroundTurn
+	in               *bufio.Reader
+	out, err         io.Writer
+	flags            flags
+	store            *state.Store
+	cfg              state.Config
+	registry         *tools.Registry
+	hostTerminals    *tools.TerminalController
+	engine           *agent.Engine
+	schedules        *schedule.Store
+	skills           []instructions.Skill
+	session          core.Session
+	writeMu          sync.Mutex
+	editor           *tui.LineEditor // nil unless stdin and stdout are terminals
+	inputMu          sync.Mutex
+	inputOnce        sync.Once
+	reads            chan inputRequest
+	manager          *agents
+	ctx              context.Context
+	cancel           context.CancelFunc
+	multiline        bool
+	plan             atomic.Bool
+	planState        planRuntime
+	timeContext      timeContextRuntime
+	instructionState instructionBaselines
+	current          atomic.Value
+	attachments      []core.Block
+	attachmentStore  *attachments.Store
+	mcpMu            sync.RWMutex
+	mcpReloadMu      sync.Mutex
+	mcpSupervisors   map[string]*mcp.Supervisor
+	mcpInstructions  map[string]string
+	mcpEntries       map[string]state.MCPServer
+	mcpContext       context.Context
+	mcpCancel        context.CancelFunc
+	mcpWatchDone     chan struct{}
+	unattended       bool
+	receipts         sync.Map
+	background       sync.WaitGroup
+	streamKinds      sync.Map
+	workflows        *workflow.Engine
+	workflowNotices  workflowJobNotices
+	signalMu         sync.Mutex
+	signalRefs       int
+	signalStop       func()
+	foreground       sync.Map // session id -> *foregroundTurn
+	fileMu           sync.Mutex
+	fileSearches     map[string]fileSearch
+	goals            goalRuntime
+	jobWakeMu        sync.Mutex
+	jobWakes         map[string]jobWakeCount
+	jobOutputBounds  sync.Map
 }
 
 type inputLine struct {
 	text string
 	err  error
 }
-type inputRequest struct{ reply chan inputLine }
+type inputRequest struct {
+	reply   chan inputLine
+	options tui.LineOptions
+}
+
+type fileSearch struct {
+	cwd   string
+	index *reference.Files
+}
 
 func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a := &App{in: bufio.NewReader(in), out: out, err: errOut, flags: flags{home: state.DefaultRoot()}}
@@ -151,6 +177,10 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		args = sub.Args()
 	}
 	root, err := filepath.Abs(a.flags.home)
+	if a.flags.json && a.editor != nil {
+		a.editor.Close()
+		a.editor = nil
+	}
 	if err != nil {
 		return a.fail(err)
 	}
@@ -216,6 +246,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 	defer a.cancel()
+	defer a.closeFileSearches()
 	if command == "models" {
 		if err = a.modelsCommand(args); err != nil {
 			return a.fail(err)
@@ -261,8 +292,22 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	a.registry = tools.New()
 	defer a.registry.Close()
+	a.hostTerminals, err = tools.NewTerminalController(userTerminalOptions(a.cfg.UserTerminal))
+	if err != nil {
+		return a.fail(err)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if closeErr := a.hostTerminals.Close(closeCtx); closeErr != nil {
+			a.errorLine(fmt.Sprintf("close terminals: %v", closeErr))
+		}
+	}()
 	a.registry.SetDispatcher(a.Execute)
 	a.registry.SetNodePath(a.cfg.NodePath)
+	if err = a.configureJobs(); err != nil {
+		return a.fail(err)
+	}
 	a.registry.SetSpillDir(filepath.Join(root, "artifacts", "shell-output"))
 	ptcMode := "per-call"
 	if a.cfg.ExecutionMode == "ptc-repl" {
@@ -271,7 +316,11 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if err = a.registry.SetPTCMode(ptcMode); err != nil {
 		return a.fail(err)
 	}
-	models, err := buildModels(a.cfg)
+	replayKey, err := a.store.ReplayKey()
+	if err != nil {
+		return a.fail(err)
+	}
+	models, err := buildModels(a.cfg, replayKey)
 	if err != nil {
 		return a.fail(err)
 	}
@@ -283,6 +332,10 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, ExecutionMode: a.cfg.ExecutionMode, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext})
 	a.engine.Notify = a.notice
 	a.engine.UpdateOptions(func(o *agent.Options) {
+		o.PrepareInput = a.prepareInput
+		o.CommitPreparedInput = a.commitGoalInput
+		o.BeforeModel = a.beforeModel
+		o.BeforeStep = a.prepareStep
 		o.BeforeTurn = a.workspaceTurnStarted
 		o.AfterTurn = a.workspaceTurnFinished
 		o.RenderToolResult = a.spillToolResult
@@ -290,12 +343,8 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	defer a.engine.Close()
 	a.manager = newAgents(a)
 	defer a.manager.close()
-	a.mcpClients = map[string]*mcp.Client{}
-	defer func() {
-		for _, client := range a.mcpClients {
-			_ = client.Close()
-		}
-	}()
+	defer a.closeGoals()
+	defer a.closeMCP()
 	if err = a.registerTools(); err != nil {
 		return a.fail(err)
 	}
@@ -367,17 +416,31 @@ func (a *App) promptLabel(label string) string {
 	return "\x1b[1;36m" + label + "\x1b[0m"
 }
 
-func (a *App) fail(err error) int { fmt.Fprintf(a.err, "dsgo: %s\n", clean(err.Error())); return 1 }
+func (a *App) fail(err error) int { a.errorLine("dsgo: " + clean(err.Error())); return 1 }
 func (a *App) print(v any) {
-	a.writeMu.Lock()
-	defer a.writeMu.Unlock()
 	b, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Fprintln(a.out, clean(string(b)))
+	a.line("%s\n", clean(string(b)))
 }
 func (a *App) line(format string, args ...any) {
+	text := fmt.Sprintf(format, args...)
+	if a.editor != nil {
+		a.editor.WriteAbove(text)
+		return
+	}
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
-	fmt.Fprintf(a.out, format, args...)
+	_, _ = io.WriteString(a.out, text)
+}
+func (a *App) errorLine(text string) {
+	if a.editor != nil {
+		a.editor.WriteAbove(text + "\n")
+		return
+	}
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	if a.err != nil {
+		fmt.Fprintln(a.err, text)
+	}
 }
 
 // Untrusted model/file output must never inject terminal control sequences.
@@ -391,92 +454,105 @@ func clean(s string) string {
 }
 
 func (a *App) selectSession(id string) error {
-	var err error
 	if id == "latest" {
-		sessions, x := a.store.List(false)
-		if x != nil {
-			return x
+		sessions, err := a.store.List(false)
+		if err != nil {
+			return err
 		}
 		if len(sessions) == 0 {
 			return errors.New("no session to resume")
 		}
 		id = sessions[0].ID
 	}
-	if id == "" {
-		a.session, err = a.store.Create(a.flags.cwd, "New session")
+	var next core.Session
+	var err error
+	fresh := id == ""
+	if fresh {
+		next, err = a.store.Create(a.flags.cwd, "New session")
 		if err != nil {
 			return err
 		}
-		a.current.Store(a.session.ID)
-		a.plan.Store(a.session.Plan)
-		a.session.Permission = a.cfg.Permission
-		a.session.Model = a.cfg.Model
-		a.session.Provider = a.cfg.SelectedProvider
-		a.session.Thinking = a.cfg.Thinking
-		a.session.Preset = a.cfg.AgentPreset
-		a.session.ExecutionMode = a.cfg.ExecutionMode
-		if a.flags.mode == "" && a.cfg.AgentPreset == "ptc" {
-			a.session.ExecutionMode = "ptc"
+		next.Permission, next.Model, next.Provider, next.Thinking = a.cfg.Permission, a.cfg.Model, a.cfg.SelectedProvider, a.cfg.Thinking
+		next.Preset, next.ExecutionMode = a.cfg.AgentPreset, a.cfg.ExecutionMode
+		if a.flags.mode == "" && next.Preset == "ptc" {
+			next.ExecutionMode = "ptc"
 		}
-		if a.cfg.AgentPreset == "minimal" {
-			a.session.ExecutionMode = "native"
+		if next.Preset == "minimal" {
+			next.ExecutionMode = "native"
 		}
-		if err = a.store.Update(a.session); err != nil {
+	} else {
+		next, err = a.store.Get(id)
+		if err != nil {
 			return err
 		}
-		// The child-route preference is sampled once, while the Session is new.
-		return a.sampleSubagentPolicy(a.session.ID)
-	}
-	a.session, err = a.store.Get(id)
-	if err != nil {
-		return err
-	}
-	if a.session.Archived {
-		return errors.New("session is archived; unarchive it before resuming")
-	}
-	a.current.Store(a.session.ID)
-	a.plan.Store(a.session.Plan)
-	if a.flags.permission != "" {
-		a.session.Permission = a.flags.permission
-	}
-	if a.flags.model != "" {
-		a.session.Model = a.flags.model
-	}
-	if a.flags.provider != "" {
-		a.session.Provider = a.flags.provider
-	}
-	if a.flags.thinking != "" {
-		a.session.Thinking = a.flags.thinking
-	}
-	if a.flags.preset != "" {
-		a.session.Preset = a.flags.preset
-		a.session.ExecutionMode = "native"
-		if a.flags.preset == "ptc" {
-			a.session.ExecutionMode = "ptc"
+		if next.Archived {
+			return errors.New("session is archived; unarchive it before resuming")
+		}
+		if a.flags.permission != "" {
+			next.Permission = a.flags.permission
+		}
+		if a.flags.model != "" {
+			next.Model = a.flags.model
+		}
+		if a.flags.provider != "" {
+			next.Provider = a.flags.provider
+		}
+		if a.flags.thinking != "" {
+			next.Thinking = a.flags.thinking
+		}
+		if a.flags.preset != "" {
+			next.Preset, next.ExecutionMode = a.flags.preset, "native"
+			if next.Preset == "ptc" {
+				next.ExecutionMode = "ptc"
+			}
+		}
+		if a.flags.mode != "" {
+			next.ExecutionMode = a.flags.mode
+		}
+		if sessionPreset(next) == "minimal" && a.sessionMode(next) != "native" {
+			return errors.New("minimal uses its native persistent bash tool")
 		}
 	}
-	if a.flags.mode != "" {
-		a.session.ExecutionMode = a.flags.mode
-	}
-	if sessionPreset(a.session) == "minimal" && a.sessionMode(a.session) != "native" {
-		return errors.New("minimal uses its native persistent bash tool")
-	}
-	if err = a.store.Update(a.session); err != nil {
-		return err
-	}
-	skills, err := instructions.Skills(a.session.CWD)
+	publish := false
+	defer func() {
+		if fresh && !publish {
+			_ = a.store.Delete(next.ID)
+		}
+	}()
+	skills, err := instructions.Skills(next.CWD)
 	if err != nil {
 		return err
 	}
-	a.skills = skills
+	if err = a.store.Update(next); err != nil {
+		return err
+	}
+	if fresh {
+		if err = a.sampleSubagentPolicy(next.ID); err != nil {
+			return err
+		}
+	}
+	if a.session.ID != "" {
+		a.goalOpened(a.session.ID)
+	}
+	a.goalOpened(next.ID)
+	a.resetJobWakeBudget(next.ID)
+	a.session, a.skills = next, skills
+	a.current.Store(next.ID)
+	a.plan.Store(next.Plan)
+	publish = true
 	return nil
 }
 
 func (a *App) notice(n agent.Notice) {
+	a.jobInputAccepted(n)
+	a.goalNotice(n)
+	if n.Type == "tool_finished" {
+		a.invalidateFileIndex(n.SessionID)
+	}
 	if n.Type == "event" {
-		if event, ok := n.Data.(core.Event); ok && event.Type == "user/message" {
-			var m core.Message
-			if json.Unmarshal(event.Data, &m) == nil && m.DeliveryID != "" {
+		if event, ok := n.Data.(core.Event); ok {
+			if messages, recognized, err := core.UserInputMessages(event); recognized && err == nil && len(messages) > 0 && messages[0].DeliveryID != "" {
+				m := messages[0]
 				if ch, ok := a.receipts.LoadAndDelete(m.DeliveryID); ok {
 					close(ch.(chan struct{}))
 				}
@@ -535,7 +611,7 @@ func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 	a.inputMu.Lock()
 	defer a.inputMu.Unlock()
 	a.line("\nApproval %s\n%s\n%s\nAllow once? [y/N] ", clean(q.Tool), clean(q.Description), clean(string(q.Input)))
-	answer, err := a.readLine(ctx)
+	answer, err := a.readPrivateLine(ctx, "Allow once? [y/N] ")
 	if err != nil {
 		return false, err
 	}
@@ -546,6 +622,12 @@ func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 }
 
 func (a *App) readLine(ctx context.Context) (string, error) {
+	return a.readLineWithOptions(ctx, tui.LineOptions{})
+}
+func (a *App) readPrivateLine(ctx context.Context, prompt string) (string, error) {
+	return a.readLineWithOptions(ctx, tui.LineOptions{Prompt: prompt})
+}
+func (a *App) readLineWithOptions(ctx context.Context, options tui.LineOptions) (string, error) {
 	// A single broker owns stdin. Each prompt has a private reply queue: after
 	// cancellation its eventual line is discarded, never reused as approval.
 	a.inputOnce.Do(func() {
@@ -557,7 +639,7 @@ func (a *App) readLine(ctx context.Context) (string, error) {
 					var s string
 					var err error
 					if a.editor != nil {
-						s, err = a.editor.ReadLine()
+						s, err = a.editor.ReadLineWithOptions(req.options)
 					} else {
 						s, err = a.in.ReadString('\n')
 					}
@@ -570,7 +652,7 @@ func (a *App) readLine(ctx context.Context) (string, error) {
 	})
 	done := make(chan inputLine, 1)
 	select {
-	case a.reads <- inputRequest{reply: done}:
+	case a.reads <- inputRequest{reply: done, options: options}:
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
@@ -592,6 +674,7 @@ func (a *App) turn(prompt string) error {
 	input := core.TextMessage("user", prompt)
 	input.Content = append(input.Content, a.attachments...)
 	input.DeliveryID = "input:" + agent.ID()
+	pendingInput := input
 	ctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
 	owner := &foregroundTurn{cancel: cancel}
@@ -602,10 +685,17 @@ func (a *App) turn(prompt string) error {
 	for {
 		select {
 		case err := <-done:
+			_, goalRound, _ := state.GoalSource(pendingInput)
+			if goalRound && !a.inputAdmitted(a.session.ID, pendingInput.DeliveryID) {
+				a.dropGoalReservation(a.session.ID, pendingInput.DeliveryID)
+			}
 			if errors.Is(err, agent.ErrBusy) {
+				if goalRound {
+					return nil
+				}
 				// Another automatic owner may have won the admission race. The
 				// full user input is committed before the composer clears media.
-				if _, queueErr := a.manager.deliver(ctx, a.session.ID, input, false); queueErr != nil {
+				if _, queueErr := a.manager.deliver(ctx, a.session.ID, pendingInput, false); queueErr != nil {
 					return queueErr
 				}
 				a.attachments = nil
@@ -621,15 +711,16 @@ func (a *App) turn(prompt string) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			continuation, x := a.goalContinuation()
+			continuation, x := a.goalContinuation(ctx, a.session.ID)
 			if x != nil {
 				return x
 			}
-			if continuation == "" {
+			if continuation == nil {
 				return nil
 			}
 			a.line("\n[Continuing active goal]\n")
-			go func() { done <- a.engine.Run(ctx, a.session.ID, core.TextMessage("user", continuation)) }()
+			pendingInput = *continuation
+			go func() { done <- a.engine.Run(ctx, a.session.ID, *continuation) }()
 		}
 	}
 }
@@ -640,11 +731,8 @@ func (a *App) inputAdmitted(id, delivery string) bool {
 		return false
 	}
 	for _, event := range events {
-		if event.Type == "user/message" {
-			var message core.Message
-			if json.Unmarshal(event.Data, &message) == nil && message.DeliveryID == delivery {
-				return true
-			}
+		if messages, recognized, err := core.UserInputMessages(event); recognized && err == nil && len(messages) > 0 && messages[0].DeliveryID == delivery {
+			return true
 		}
 	}
 	return false
@@ -663,7 +751,7 @@ func (a *App) chat() error {
 	for {
 		a.inputMu.Lock()
 		a.line("\n%s ", a.promptLabel("dsgo>"))
-		line, err := a.readLine(a.ctx)
+		line, err := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("dsgo>") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
 		a.inputMu.Unlock()
 		eof := errors.Is(err, io.EOF)
 		if err != nil && !eof {
@@ -674,7 +762,7 @@ func (a *App) chat() error {
 			line = strings.TrimSuffix(line, "\\") + "\n"
 			a.line("%s ", a.promptLabel("..."))
 			a.inputMu.Lock()
-			next, x := a.readLine(a.ctx)
+			next, x := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("...") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
 			a.inputMu.Unlock()
 			line += strings.TrimRight(next, "\r\n")
 			eof = errors.Is(x, io.EOF)
@@ -717,10 +805,21 @@ func (a *App) showHistory() {
 	for _, m := range messages {
 		for _, b := range m.Content {
 			if b.Type == "text" {
-				a.line("\n%s: %s\n", m.Role, clean(b.Text))
+				text := b.Text
+				if m.Role == "user" {
+					text = tui.MaskSentUserText(text)
+				}
+				a.line("\n%s: %s\n", m.Role, clean(text))
 			}
 		}
 	}
+}
+
+func submittedUserDisplay(text string) string {
+	if strings.HasPrefix(strings.TrimSpace(text), "/") {
+		return text
+	}
+	return tui.MaskSentUserText(text)
 }
 
 func (a *App) doctor() int {

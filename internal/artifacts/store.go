@@ -143,7 +143,8 @@ func ownerKey(owner string) string {
 type Spill struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
-	Tool      string `json:"tool"`
+	Tool      string `json:"tool,omitempty"`
+	Source    any    `json:"source,omitempty"`
 	TurnID    string `json:"turn_id,omitempty"`
 	Path      string `json:"path"`
 	Bytes     int    `json:"bytes"`
@@ -151,6 +152,15 @@ type Spill struct {
 }
 
 func (s *Store) Spill(session, turn, tool, text string) (Spill, error) {
+	return s.spill(session, turn, tool, nil, text)
+}
+
+// SpillContext retains a sourced context capture without fabricating a tool call.
+func (s *Store) SpillContext(session string, source any, text string) (Spill, error) {
+	return s.spill(session, "", "", source, text)
+}
+
+func (s *Store) spill(session, turn, tool string, source any, text string) (Spill, error) {
 	if session == "" {
 		return Spill{}, errors.New("spill requires a session owner")
 	}
@@ -161,11 +171,14 @@ func (s *Store) Spill(session, turn, tool, text string) (Spill, error) {
 	id := hex.EncodeToString(nonce[:])
 	name := ownerKey(session) + "-" + id
 	d := sha256.Sum256([]byte(text))
-	ref := Spill{ID: id, SessionID: session, TurnID: turn, Tool: tool, Path: filepath.Join(s.path, "spills", name+".txt"), Bytes: len(text), SHA256: hex.EncodeToString(d[:])}
+	ref := Spill{ID: id, SessionID: session, TurnID: turn, Tool: tool, Source: source, Path: filepath.Join(s.path, "spills", name+".txt"), Bytes: len(text), SHA256: hex.EncodeToString(d[:])}
+	b, err := json.Marshal(ref)
+	if err != nil {
+		return Spill{}, err
+	}
 	if err := s.write(filepath.Join("spills", name+".txt"), []byte(text), false); err != nil {
 		return Spill{}, err
 	}
-	b, _ := json.Marshal(ref)
 	if err := s.write(filepath.Join("spills", name+".json"), b, false); err != nil {
 		return Spill{}, err
 	}

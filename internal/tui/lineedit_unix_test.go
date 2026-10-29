@@ -68,11 +68,16 @@ func (h *editorHarness) read(keys ...string) (string, error) {
 		err  error
 	}
 	done := make(chan result, 1)
+	queries := strings.Count(h.output(), "\x1b[6n")
 	go func() {
 		line, err := h.editor.ReadLine()
 		done <- result{line, err}
 	}()
-	h.waitFor("\x1b[6n")
+	for deadline := time.Now().Add(3 * time.Second); strings.Count(h.output(), "\x1b[6n") <= queries; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			h.t.Fatal("editor did not start a fresh read")
+		}
+	}
 	for _, k := range keys {
 		if _, err := h.master.Write([]byte(k)); err != nil {
 			h.t.Fatal(err)
@@ -117,6 +122,30 @@ func TestLineEditorDeletesWholeWideCharactersAndRestoresTerminal(t *testing.T) {
 	}
 }
 
+func TestLineEditorSubmittedDisplayKeepsRawInputAndHistory(t *testing.T) {
+	h := newEditorHarness(t, 80)
+	secret := "sk-1" + strings.Repeat("a", 39)
+	h.editor.defaults = LineOptions{History: true, DisplaySubmitted: func(text string) string { return MaskSentUserText(text) }}
+	line, err := h.read("\x1b[2;7R", secret, "\r")
+	if err != nil || line != secret+"\n" {
+		t.Fatalf("canonical input: %q, %v", line, err)
+	}
+	if got := h.output(); !strings.Contains(got, "\x1b[J"+MaskSentUserText(secret)) {
+		t.Fatalf("accepted display was not redrawn: %q", got)
+	}
+	line, err = h.read("\x1b[3;7R", "\x1b[A", "\r")
+	if err != nil || line != secret+"\n" {
+		t.Fatalf("history lost the original input: %q, %v", line, err)
+	}
+	// Per-prompt display policy does not propagate to private questions.
+	h.editor.defaults = LineOptions{}
+	before := len(h.output())
+	line, err = h.read("\x1b[4;7R", secret, "\r")
+	if err != nil || line != secret+"\n" || strings.Contains(h.output()[before:], "***") {
+		t.Fatalf("private prompt inherited chat policy: %q, %v", line, err)
+	}
+}
+
 func TestLineEditorRedrawsAcrossWrappedRows(t *testing.T) {
 	h := newEditorHarness(t, 20)
 	// Four wide characters from column 15: two fit, the rest wrap to row 2.
@@ -148,8 +177,9 @@ func TestLineEditorControlKeysAndInterrupt(t *testing.T) {
 	if line, _ := h.read("\x1b[1;1R", "one two  ", "\x17", "\r"); line != "one \n" {
 		t.Fatalf("Ctrl+W removes the previous word and its trailing spaces: %q", line)
 	}
-	// Arrow keys and other escape sequences never reach the line.
-	if line, _ := h.read("\x1b[1;1R", "a\x1b[D\x1bOAb\r"); line != "ab\n" {
+	// Arrow keys move the caret without inserting their escape bytes. History
+	// is disabled by default, so Up leaves this draft in place.
+	if line, _ := h.read("\x1b[1;1R", "a\x1b[D\x1bOAb\r"); line != "ba\n" {
 		t.Fatalf("escape sequences leaked: %q", line)
 	}
 	if _, err := h.read("\x1b[1;1R", "\x04"); err != io.EOF {
@@ -209,5 +239,85 @@ func TestLineEditorOnDumbTerminalSkipsPositionQuery(t *testing.T) {
 	}
 	if out := h.output(); strings.Contains(out, "\x1b") || !strings.Contains(out, "中\b\b  \b\b") {
 		t.Fatalf("dumb terminal output: %q", out)
+	}
+}
+
+func TestLineEditorPTYMiddleEditingAndPrivateHistory(t *testing.T) {
+	h := newEditorHarness(t, 40)
+	h.editor.SetHistoryEnabled(true)
+	if line, _ := h.read("\x1b[1;7R", "你好ab\x1b[D\x1b[D中\x1b[C\x1b[3~\r"); line != "你好中a\n" {
+		t.Fatal(line)
+	}
+	h.editor.SetHistoryEnabled(false)
+	if line, _ := h.read("\x1b[1;7R", "\x1b[Aprivate-key\r"); line != "private-key\n" {
+		t.Fatal(line)
+	}
+	h.editor.SetHistoryEnabled(true)
+	if line, _ := h.read("\x1b[1;7R", "\x1b[A\r"); line != "你好中a\n" {
+		t.Fatalf("private question entered history: %q", line)
+	}
+}
+
+func TestLineEditorPTYCompletionPreservesDraftAndTerminalState(t *testing.T) {
+	h := newEditorHarness(t, 40)
+	before := terminalState(t, h.editor.tty)
+	h.editor.SetCompletionProvider(func(line string, cursor int) CompletionResult {
+		return CompletionResult{Start: 0, End: cursor, Candidates: []Completion{{Value: "/help ", Label: "帮助"}, {Value: "/history ", Label: "历史"}}}
+	})
+	line, err := h.read("\x1b[1;7R", "/h\t\x1b[B\r\r")
+	if err != nil || line != "/history \n" {
+		t.Fatalf("selection %q %v", line, err)
+	}
+	if !strings.Contains(h.output(), "> 历史") {
+		t.Fatalf("missing menu highlight: %q", h.output())
+	}
+	if after := terminalState(t, h.editor.tty); after != before {
+		t.Fatalf("terminal mode changed: %s -> %s", before, after)
+	}
+}
+
+func TestLineEditorPTYBackgroundOutputAndResizePreserveCaret(t *testing.T) {
+	h := newEditorHarness(t, 20)
+	done := make(chan string, 1)
+	go func() { line, _ := h.editor.ReadLineWithOptions(LineOptions{Prompt: "dsgo> "}); done <- line }()
+	h.waitFor("\x1b[6n")
+	h.master.Write([]byte("\x1b[1;7R你好abcd\x1b[D\x1b[D"))
+	h.waitFor("你好abcd")
+	// Ensure both arrow keys have reached the editor before asynchronous output.
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+		h.editor.mu.Lock()
+		cursor := h.editor.cursor
+		h.editor.mu.Unlock()
+		if cursor == 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("caret did not move")
+		}
+	}
+	h.editor.WriteAbove("background finished\n")
+	if err := pty.Setsize(h.master, &pty.Winsize{Rows: 24, Cols: 40}); err != nil {
+		t.Fatal(err)
+	}
+	h.editor.Resize()
+	h.master.Write([]byte("\x1b[1;7R中\x1b[3~\r"))
+	select {
+	case line := <-done:
+		if line != "你好ab中d\n" {
+			t.Fatalf("draft lost after output/resize: %q", line)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("line did not finish")
+	}
+	if !strings.Contains(h.output(), "background finished\ndsgo> ") {
+		t.Fatalf("background output not above input: %q", h.output())
+	}
+}
+
+func TestLineEditorPTYBracketedPasteKeepsMultilineDraft(t *testing.T) {
+	h := newEditorHarness(t, 40)
+	line, err := h.read("\x1b[1;7R", "\x1b[200~first\nsecond\x1b[201~\r")
+	if err != nil || line != "first\nsecond\n" {
+		t.Fatalf("paste submitted early: %q %v", line, err)
 	}
 }

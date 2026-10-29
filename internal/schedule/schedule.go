@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -37,6 +38,7 @@ type Task struct {
 	Pending                   string           `json:"pending,omitempty"`
 	PendingAt                 time.Time        `json:"pending_at,omitempty"`
 	PendingPrompt             *string          `json:"pending_prompt,omitempty"`
+	PendingNext               *time.Time       `json:"pending_next,omitempty"`
 	LastDelivered             time.Time        `json:"last_delivered,omitempty"`
 	LastError                 string           `json:"last_error,omitempty"`
 	Title                     string           `json:"title,omitempty"`
@@ -53,12 +55,15 @@ type Task struct {
 }
 
 type Store struct {
-	root      string
-	mu        sync.Mutex
-	activeMu  sync.Mutex
-	active    map[string]context.CancelFunc
-	optionsMu sync.RWMutex
-	options   Options
+	root           string
+	mu             sync.Mutex
+	activeMu       sync.Mutex
+	active         map[string]context.CancelFunc
+	optionsMu      sync.RWMutex
+	options        Options
+	operations     chan struct{}
+	managementWake chan struct{}
+	revision       atomic.Uint64
 }
 
 func Open(root string) (*Store, error) {
@@ -66,7 +71,8 @@ func Open(root string) (*Store, error) {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
-	s := &Store{root: root, active: make(map[string]context.CancelFunc), options: defaultOptions()}
+	s := &Store{root: root, active: make(map[string]context.CancelFunc), options: defaultOptions(), operations: make(chan struct{}, 1), managementWake: make(chan struct{}, 1)}
+	s.operations <- struct{}{}
 	if err := s.locked(context.Background(), func() error { _, err := s.read(); return err }); err != nil {
 		return nil, err
 	}
@@ -202,6 +208,9 @@ func (s *Store) write(tasks []Task) error {
 	if syncErr != nil {
 		return syncErr
 	}
+	if closeErr == nil {
+		s.revision.Add(1)
+	}
 	return closeErr
 }
 func (s *Store) List() ([]Task, error) {
@@ -209,7 +218,7 @@ func (s *Store) List() ([]Task, error) {
 	err := s.locked(context.Background(), func() error { var err error; out, err = s.read(); return err })
 	return out, err
 }
-func (s *Store) Create(t Task) (Task, error) {
+func (s *Store) createLegacy(t Task) (Task, error) {
 	// Legacy callers provide timing/content only, never durable receipt fields.
 	t = Task{SessionID: t.SessionID, Prompt: t.Prompt, Kind: t.Kind, At: t.At, Every: t.Every, EverySeconds: t.EverySeconds, Clock: t.Clock, Weekday: t.Weekday, Weekdays: append([]int{}, t.Weekdays...), Cron: t.Cron, Timezone: t.Timezone, Title: t.Title}
 	if strings.TrimSpace(t.Prompt) == "" || t.SessionID == "" {
@@ -253,7 +262,7 @@ func (s *Store) Create(t Task) (Task, error) {
 	})
 	return t, err
 }
-func (s *Store) Cancel(id string) error {
+func (s *Store) cancelLegacy(id string) error {
 	err := s.locked(context.Background(), func() error {
 		tasks, err := s.read()
 		if err != nil {
@@ -265,6 +274,7 @@ func (s *Store) Cancel(id string) error {
 				tasks[i].Pending = ""
 				tasks[i].PendingAt = time.Time{}
 				tasks[i].PendingPrompt = nil
+				tasks[i].PendingNext = nil
 				return s.write(tasks)
 			}
 		}
@@ -829,6 +839,7 @@ func (s *Store) deliverTask(ctx context.Context, snapshot Task, clock func() tim
 				current.Pending = ""
 				current.PendingAt = time.Time{}
 				current.PendingPrompt = nil
+				current.PendingNext = nil
 				if current.Kind == "once" {
 					current.Enabled = false
 				} else {

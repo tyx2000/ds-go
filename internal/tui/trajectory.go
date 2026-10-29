@@ -189,26 +189,35 @@ func Project(events []core.Event, live bool) Transcript {
 			if ti >= 0 {
 				sumUsage(&out.Turns[ti].Usage, u)
 			}
-		case "user/message":
-			var m core.Message
-			if json.Unmarshal(ev.Data, &m) != nil {
+		case "user/message", "user/input":
+			inputs, _, err := core.UserInputMessages(ev)
+			if err != nil {
 				continue
 			}
-			base.Kind = "user"
-			base.Step = 0
-			base.Input = cloneJSON(ev.Data)
-			base.Text, base.Images, base.Files = messageSummary(m)
-			add(base)
-			out.Stats.Images += base.Images
-			out.Stats.Files += base.Files
-			if ti >= 0 && !titleSet[ev.TurnID] {
-				titleSet[ev.TurnID] = true
-				title := strings.TrimSpace(strings.Join(strings.Fields(base.Text), " "))
-				if title == "" {
-					title = attachmentSummary(base.Images, base.Files)
+			for i, message := range inputs {
+				row := base
+				row.Kind, row.Step = "user", 0
+				row.Input = cloneJSON(ev.Data)
+				if ev.Type == "user/input" {
+					row.Input = core.JSON(message)
 				}
-				if title != "" {
-					out.Turns[ti].Title = clip(title, 100)
+				if i > 0 {
+					row.ID = fmt.Sprintf("%s/context/%d", base.ID, i)
+					row.Kind, row.Name = "context", "Referenced sessions"
+				}
+				row.Text, row.Images, row.Files = messageSummary(message)
+				add(row)
+				out.Stats.Images += row.Images
+				out.Stats.Files += row.Files
+				if i == 0 && ti >= 0 && !titleSet[ev.TurnID] {
+					titleSet[ev.TurnID] = true
+					title := strings.TrimSpace(strings.Join(strings.Fields(row.Text), " "))
+					if title == "" {
+						title = attachmentSummary(row.Images, row.Files)
+					}
+					if title != "" {
+						out.Turns[ti].Title = clip(title, 100)
+					}
 				}
 			}
 		case "assistant/message":

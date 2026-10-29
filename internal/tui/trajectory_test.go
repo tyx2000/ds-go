@@ -149,3 +149,20 @@ func TestPagerNavigationSearchAndFragmentedKeys(t *testing.T) {
 		t.Fatal("quit")
 	}
 }
+
+func TestTrajectoryInputBatchKeepsCapturedContextAdjacent(t *testing.T) {
+	direct := core.TextMessage("user", "Compare @source")
+	captured := core.TextMessage("user", "immutable untrusted snapshot")
+	captured.Source = map[string]any{"kind": "session-reference"}
+	events := []core.Event{
+		{ID: "turn", Seq: 1, TurnID: "one", Type: "turn/started", Time: time.Now(), Data: core.JSON(map[string]any{})},
+		{ID: "input", Seq: 2, TurnID: "one", Type: "user/input", Time: time.Now(), Data: core.JSON(core.InputBatch{Version: 1, Message: direct, Contexts: []core.Message{captured}})},
+	}
+	view := Project(events, true)
+	if len(view.Records) != 2 || view.Records[0].Kind != "user" || view.Records[1].Kind != "context" || view.Records[1].Text != captured.Content[0].Text {
+		t.Fatalf("batch projection %+v", view.Records)
+	}
+	if view.Records[0].ID == view.Records[1].ID || len(view.Turns) != 1 || view.Turns[0].Title != "Compare @source" {
+		t.Fatalf("batch identities/title %+v", view)
+	}
+}

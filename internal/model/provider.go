@@ -23,6 +23,7 @@ type ProviderOptions struct {
 	APIKey      string            `json:"api_key,omitempty"`
 	APIKeyEnv   string            `json:"api_key_env,omitempty"`
 	HTTPClient  *http.Client      `json:"-"`
+	ReplayKey   []byte            `json:"-"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	MaxRetries  int               `json:"max_retries,omitempty"`
 	RetryDelay  time.Duration     `json:"-"`
@@ -85,7 +86,7 @@ func NewProvider(options ProviderOptions) (*ProviderClient, error) {
 			}
 		}
 	}
-	transport := New(Options{BaseURL: options.BaseURL, APIKey: options.APIKey, HTTPClient: options.HTTPClient, MaxRetries: options.MaxRetries, RetryDelay: options.RetryDelay, IdleTimeout: options.IdleTimeout, DisableFiles: true})
+	transport := New(Options{BaseURL: options.BaseURL, APIKey: options.APIKey, HTTPClient: options.HTTPClient, MaxRetries: options.MaxRetries, RetryDelay: options.RetryDelay, IdleTimeout: options.IdleTimeout, DisableFiles: true, ReplayKey: options.ReplayKey})
 	if options.MaxRetries == 0 {
 		transport.retries = 5
 	}
@@ -159,6 +160,7 @@ func (p *ProviderClient) Stream(ctx context.Context, input core.Request, emit fu
 	if err != nil {
 		return core.Response{}, err
 	}
+	input.ReplayIdentity = p.replayIdentity(input.Provider, key)
 	// This matches the official pi-ai seam, whose common stream options cannot
 	// guarantee stop sequences across all its protocols.
 	if len(input.StopSequences) > 0 {
@@ -229,6 +231,7 @@ func (p *ProviderClient) Stream(ctx context.Context, input core.Request, emit fu
 		}
 		timedOut := watch.stop()
 		cancel()
+		response.ReplayIdentity = input.ReplayIdentity
 		if ctx.Err() != nil {
 			return response, ctx.Err()
 		}
@@ -259,6 +262,13 @@ func (p *ProviderClient) Stream(ctx context.Context, input core.Request, emit fu
 }
 
 func (p *ProviderClient) payload(input core.Request) (map[string]any, error) {
+	if input.ReplayIdentity == "" {
+		key, err := p.credential()
+		if err != nil {
+			return nil, err
+		}
+		input.ReplayIdentity = p.replayIdentity(input.Provider, key)
+	}
 	normal := input
 	if normal.Provider == "" {
 		normal.Provider = p.options.API

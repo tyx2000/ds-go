@@ -66,10 +66,81 @@ type agents struct {
 	wakeRuns        map[uint64]*parentWake
 	wakeWG          sync.WaitGroup
 	nextWake        uint64
+	settling        map[string]int // completion notices not yet accepted by their parent
 }
 
 func newAgents(a *App) *agents {
-	return &agents{app: a, children: map[string]*child{}, starting: map[string]uint64{}, max: 8, reservations: map[uint64]*spawnReservation{}, draining: map[string]int{}, wakePaused: map[string]bool{}, wakeRuns: map[uint64]*parentWake{}}
+	max := a.cfg.SubagentMaxActive
+	if max <= 0 {
+		max = 8
+	}
+	return &agents{app: a, children: map[string]*child{}, starting: map[string]uint64{}, max: max, reservations: map[uint64]*spawnReservation{}, draining: map[string]int{}, wakePaused: map[string]bool{}, wakeRuns: map[uint64]*parentWake{}, settling: map[string]int{}}
+}
+
+// Residency, rather than historical Session ancestry, identifies an activation
+// pool. A top-level resumed/forked conversation starts its own pool even when
+// its durable header still records an older delegated origin.
+func (m *agents) activationRootLocked(id string) string {
+	for {
+		c := m.children[id]
+		if c == nil {
+			return id
+		}
+		id = c.ParentID
+	}
+}
+
+func (m *agents) activeInTreeLocked(parent string) int {
+	root := m.activationRootLocked(parent)
+	count := 0
+	for id, c := range m.children {
+		if c.Status == "running" && m.activationRootLocked(id) == root {
+			count++
+		}
+	}
+	for _, reservation := range m.reservations {
+		if m.activationRootLocked(reservation.parent) == root {
+			count++
+		}
+	}
+	return count
+}
+
+// canCompleteStructured observes only this session's owned activation tree.
+// The structured runtime separately seals dispatch and accepted Inbox work,
+// including calls which have not reached their manager reservation yet.
+func (m *agents) canCompleteStructured(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing || m.app.ctx.Err() != nil || m.isDrainingLocked(id) {
+		return false
+	}
+	for childID, child := range m.children {
+		if childID != id && m.belongsLocked(childID, id) && child.Status == "running" {
+			return false
+		}
+	}
+	for _, reservation := range m.reservations {
+		if m.belongsLocked(reservation.parent, id) {
+			return false
+		}
+	}
+	for childID, pending := range m.settling {
+		if pending > 0 && m.belongsLocked(childID, id) {
+			return false
+		}
+	}
+	for root, count := range m.draining {
+		if count > 0 && m.belongsLocked(root, id) {
+			return false
+		}
+	}
+	for _, wake := range m.wakeRuns {
+		if m.belongsLocked(wake.target, id) {
+			return false
+		}
+	}
+	return true
 }
 func (m *agents) close() {
 	m.mu.Lock()
@@ -285,7 +356,7 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 		m.mu.Unlock()
 		return "", errors.New("subagent subtree is being disposed")
 	}
-	if m.active >= m.max {
+	if m.activeInTreeLocked(parent) >= m.max {
 		m.mu.Unlock()
 		return "", fmt.Errorf("maximum of %d active subagents reached", m.max)
 	}
@@ -327,6 +398,7 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	}
 	s.ParentID = parent
 	s.Delegated = true
+	s.CreationLabel = label
 	inheritPlan(&s, p)
 	s.Provider = p.Provider
 	s.Model = p.Model
@@ -334,6 +406,9 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	s.Preset = p.Preset
 	s.ExecutionMode = p.ExecutionMode
 	s.Permission = p.Permission
+	if s.Permission == "" {
+		s.Permission = m.app.cfg.Permission
+	}
 	if err = m.app.store.Update(s); err != nil {
 		return "", err
 	}
@@ -341,6 +416,10 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 		if err = beforeDispatch(s.ID); err != nil {
 			return "", errors.Join(err, m.app.store.Delete(s.ID))
 		}
+	}
+	descriptor, err := m.describeChild(s.ID, label, mode)
+	if err != nil {
+		return "", errors.Join(err, m.app.store.Delete(s.ID))
 	}
 	ctx, cancel := context.WithCancel(m.app.ctx)
 	done := make(chan struct{})
@@ -354,6 +433,11 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 			return "", errors.Join(err, m.app.store.Delete(s.ID))
 		}
 		return "", errors.Join(errors.New("subagent start cancelled before dispatch"), m.app.store.Delete(s.ID))
+	}
+	if err := m.establishCatalogChild(parent, s, descriptor); err != nil {
+		m.mu.Unlock()
+		cancel()
+		return "", errors.Join(err, m.app.store.Delete(s.ID))
 	}
 	m.seq++
 	c.seq = m.seq
@@ -433,6 +517,7 @@ func (m *agents) run(ctx context.Context, c *child, input *core.Message, outcome
 		if notify {
 			// Counted before mu is released so settle never sees a gap.
 			m.waking++
+			m.settling[c.ID]++
 		}
 		parent, status, errText := c.ParentID, c.Status, c.Error
 		m.mu.Unlock()
@@ -466,7 +551,19 @@ func (m *agents) owned(parent, id string) (*child, error) {
 }
 
 func (a *App) Specs() []core.ToolSpec { return a.registry.Specs() }
-func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw json.RawMessage) (core.ToolResult, error) {
+func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw json.RawMessage) (result core.ToolResult, err error) {
+	if a.store != nil {
+		tc.HarnessHome = a.store.Root()
+	}
+	a.beginJobOutputBound(tc, name, raw)
+	if tc.Nested {
+		defer func() { result, err = a.finishJobOutputBound(tc, name, result, err) }()
+	}
+	if a.engine != nil {
+		if result, handled, err := a.engine.ExecuteStructured(ctx, tc, name, raw); handled {
+			return result, err
+		}
+	}
 	registryName := name
 	if a.store != nil && tc.SessionID != "" {
 		s, err := a.store.Get(tc.SessionID)
@@ -495,33 +592,20 @@ func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw
 		}
 		tc.WorkspaceRoot = s.CWD
 		tc.ExecutionMode = a.sessionMode(s)
+		if s.Delegated {
+			// A delegated child cannot request an approval which widens the
+			// scope captured at its creation or cold restoration.
+			tc.Permission = s.Permission
+			tc.ApprovalPolicy = "never"
+			tc.Approve = nil
+		}
 		cwd, err := a.ensureWorkingDirectory(ctx, tc.SessionID)
 		if err != nil {
 			return core.ToolResult{}, err
 		}
 		tc.CWD = cwd
 	}
-	if a.planFor(tc.SessionID) {
-		switch name {
-		case "read", "read_file", "read_image", "list_directory", "search_files", "load_skill", "list_agents", "list_subagent_models", "get_current_time", "schedule_list", "web_search", "web_fetch", "ask_user_question", "exit_plan_mode", "update_goal", "working_directory", "job_output", "job_list":
-		case "run_code", "run_shell", "bash":
-			var p struct {
-				Sandbox            string `json:"sandbox"`
-				SandboxPermissions string `json:"sandbox_permissions"`
-			}
-			if err := json.Unmarshal(raw, &p); err != nil {
-				return core.ToolResult{}, err
-			}
-			if (p.Sandbox != "" && p.Sandbox != "read-only") || p.SandboxPermissions != "" {
-				return core.ToolResult{}, errors.New("plan mode permits only read-only sandbox execution")
-			}
-			tc.Permission = "read-only"
-			tc.ApprovalPolicy = "never"
-			tc.Approve = nil
-		default:
-			return core.ToolResult{}, errors.New("plan mode prevents state-changing tools; ask the user to approve with /plan off")
-		}
-	}
+
 	switch name {
 	case "jobs":
 		if result, handled, err := a.workflowJobs(ctx, tc, raw); handled {
@@ -550,7 +634,7 @@ func (a *App) systemFor(s core.Session) (string, error) {
 		text += "\nPlan mode is active. Investigate and propose a plan; the user must explicitly approve via /plan off before state changes.\n"
 	}
 	text = strings.Replace(text, "You are a coding agent powered by the selected DeepSeek model.", "You are a coding agent powered by the "+s.Model+" model.", 1)
-	return text + a.mcpInstructions + a.ptcInstructions(s) + webtools.Guidance() + workflow.Guidance + subagentGuidance, nil
+	return text + a.mcpSystemInstructions() + a.referenceSystemInstructions(s) + a.ptcInstructions(s) + webtools.Guidance() + workflow.Guidance + subagentGuidance + a.goalGuidance(), nil
 }
 func (a *App) loadSkill(name string) (string, error) { return instructions.LoadSkill(a.skills, name) }
 
@@ -576,7 +660,7 @@ func (a *App) registerTools() error {
 			text, err := instructions.LoadSkill(skills, p.Name)
 			return core.ToolResult{Content: text}, err
 		}},
-		{toolSpec("ask_user_question", "Ask the user for required information; unavailable interaction is an error, never an implicit answer.", `{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"array","items":{"type":"string"}}},"required":["question"]}`), a.question},
+		{userQuestionSpec(), a.question},
 		{toolSpec("update_todo", "Persist the current task list in the session.", `{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"text":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["text","status"]}}},"required":["items"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 			if tc.Emit != nil {
 				if err := tc.Emit("todo/updated", raw); err != nil {
@@ -585,7 +669,6 @@ func (a *App) registerTools() error {
 			}
 			return toolValue(map[string]any{"saved": true}), nil
 		}},
-		{toolSpec("update_goal", "Record the status of an existing user-requested goal. Do not create goals the user did not request.", `{"type":"object","properties":{"objective":{"type":"string"},"status":{"type":"string","enum":["active","complete","paused","blocked"]}},"required":["objective","status"]}`), a.updateGoal},
 		{toolSpec("spawn_agent", "Delegate a task to a fresh or forked child agent; children inherit the workspace and permissions.", `{"type":"object","properties":{"prompt":{"type":"string"},"label":{"type":"string"},"mode":{"type":"string","enum":["fresh","fork"]}},"required":["prompt"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 			var p struct{ Prompt, Label, Mode string }
 			if err := agent.Decode(raw, &p); err != nil {
@@ -662,51 +745,7 @@ func (a *App) registerTools() error {
 	defs = append(defs, struct {
 		s core.ToolSpec
 		h tools.Handler
-	}{toolSpec("exit_plan_mode", "Submit a complete plan for explicit approval. If interaction is unavailable, stay in plan mode.", `{"type":"object","properties":{"plan":{"type":"string"}},"required":["plan"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-		if tc.SessionID != a.current.Load() {
-			return core.ToolResult{}, errors.New("a child cannot change the parent's plan mode")
-		}
-		var p struct{ Plan string }
-		if err := agent.Decode(raw, &p); err != nil {
-			return core.ToolResult{}, err
-		}
-		if !strings.HasPrefix(strings.TrimSpace(p.Plan), "# ") {
-			return core.ToolResult{}, errors.New("plan must start with a Markdown title")
-		}
-		if !a.planFor(tc.SessionID) {
-			return core.ToolResult{}, errors.New("session is not in plan mode")
-		}
-		q := core.Approval{ID: agent.ID(), SessionID: tc.SessionID, Tool: "exit_plan_mode", Description: p.Plan, Input: raw}
-		if tc.Emit != nil {
-			if err := tc.Emit("approval/requested", q); err != nil {
-				return core.ToolResult{}, err
-			}
-		}
-		ok, err := a.approve(ctx, q)
-		if tc.Emit != nil {
-			if logErr := tc.Emit("approval/resolved", map[string]any{"id": q.ID, "allowed": ok && err == nil && ctx.Err() == nil}); logErr != nil {
-				return core.ToolResult{}, logErr
-			}
-		}
-		if err != nil {
-			return core.ToolResult{}, err
-		}
-		if !ok {
-			return core.ToolResult{}, errors.New("plan was not approved; remain in plan mode")
-		}
-		if err := ctx.Err(); err != nil {
-			return core.ToolResult{}, err
-		}
-		if tc.Emit != nil {
-			if err := tc.Emit("plan/approved", raw); err != nil {
-				return core.ToolResult{}, err
-			}
-		}
-		if err := a.setPlan(tc.SessionID, false); err != nil {
-			return core.ToolResult{}, err
-		}
-		return toolValue(map[string]any{"approved": true}), nil
-	}})
+	}{toolSpec("exit_plan_mode", "Use only in plan mode. Present your complete markdown plan for review; approval leaves plan mode from the next step, while feedback keeps planning.", `{"type":"object","additionalProperties":false,"properties":{"plan":{"type":"string"}},"required":["plan"]}`), a.exitPlanMode})
 	for _, d := range defs {
 		if d.s.Name == "create_reminder" || d.s.Name == "list_reminders" || d.s.Name == "cancel_reminder" || d.s.Name == "update_todo" {
 			continue
@@ -716,6 +755,9 @@ func (a *App) registerTools() error {
 		}
 	}
 	if err := a.registerSubagentTools(); err != nil {
+		return err
+	}
+	if err := a.registerGoalTools(); err != nil {
 		return err
 	}
 	a.registry.SetJobNotifier(a.deliverJobNotice)
@@ -773,35 +815,6 @@ func (a *App) registerTools() error {
 	return nil
 }
 
-func (a *App) question(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-	if a.unattended || a.flags.json {
-		return core.ToolResult{}, errors.New("user question requires interactive input")
-	}
-	var p struct {
-		Question string
-		Options  []string
-	}
-	if err := agent.Decode(raw, &p); err != nil {
-		return core.ToolResult{}, err
-	}
-	a.inputMu.Lock()
-	defer a.inputMu.Unlock()
-	a.line("\n%s\n", clean(p.Question))
-	for i, s := range p.Options {
-		a.line("  %d. %s\n", i+1, clean(s))
-	}
-	a.line("Answer: ")
-	answer, err := a.readLine(ctx)
-	if err != nil {
-		return core.ToolResult{}, err
-	}
-	if tc.Emit != nil {
-		if err := tc.Emit("user/answer", map[string]any{"question": p.Question, "answer": answer}); err != nil {
-			return core.ToolResult{}, err
-		}
-	}
-	return toolValue(map[string]any{"answer": answer}), nil
-}
 func (a *App) agentMessage(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 	var p struct{ ID, Message string }
 	if err := agent.Decode(raw, &p); err != nil {
@@ -832,7 +845,7 @@ func (a *App) agentMessage(ctx context.Context, tc core.ToolContext, raw json.Ra
 		}
 		c.queue = append(c.queue, p.Message)
 	} else {
-		if m.active >= m.max {
+		if m.activeInTreeLocked(c.ID) >= m.max {
 			return core.ToolResult{}, fmt.Errorf("maximum of %d active subagents reached", m.max)
 		}
 		input := core.TextMessage("user", p.Message)

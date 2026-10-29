@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -12,35 +13,77 @@ import (
 )
 
 type MCPServer struct {
-	Command  string            `json:"command,omitempty"`
-	Args     []string          `json:"args,omitempty"`
-	Env      map[string]string `json:"env,omitempty"`
-	CWD      string            `json:"cwd,omitempty"`
-	URL      string            `json:"url,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"`
-	Disabled bool              `json:"disabled,omitempty"`
+	Command             string            `json:"command,omitempty"`
+	Args                []string          `json:"args,omitempty"`
+	Env                 map[string]string `json:"env,omitempty"`
+	CWD                 string            `json:"cwd,omitempty"`
+	URL                 string            `json:"url,omitempty"`
+	Headers             map[string]string `json:"headers,omitempty"`
+	Disabled            bool              `json:"disabled,omitempty"`
+	ToolCallTimeoutMS   *int              `json:"tool_call_timeout_ms,omitempty"`
+	MaxInstructionBytes *int              `json:"max_instruction_bytes,omitempty"`
+	FailOnStartupError  bool              `json:"fail_on_startup_error,omitempty"`
+	Reconnect           *MCPReconnect     `json:"reconnect,omitempty"`
+}
+
+type MCPReconnect struct {
+	Enabled        *bool `json:"enabled,omitempty"`
+	InitialDelayMS *int  `json:"initial_delay_ms,omitempty"`
+	MaxDelayMS     *int  `json:"max_delay_ms,omitempty"`
+	MaxAttempts    *int  `json:"max_attempts,omitempty"`
+}
+
+type FileReferenceSettings struct {
+	MaxResults          *int      `json:"max_results,omitempty"`
+	MaxEntries          *int      `json:"max_entries,omitempty"`
+	ExcludedDirectories *[]string `json:"excluded_directories,omitempty"`
+}
+type SessionReferenceSettings struct {
+	MaxReferences            *int     `json:"max_references,omitempty"`
+	CandidateLimit           *int     `json:"candidate_limit,omitempty"`
+	MaxReferenceBytes        *int     `json:"max_reference_bytes,omitempty"`
+	ReferenceContextFraction *float64 `json:"reference_context_fraction,omitempty"`
+}
+
+type JobSettings struct {
+	WaitTimeoutMS       *float64 `json:"wait_timeout_ms,omitempty"`
+	MaxWaitTimeoutMS    *float64 `json:"max_wait_timeout_ms,omitempty"`
+	CompletionDelivery  string   `json:"completion_delivery,omitempty"`
+	MaxConsecutiveWakes *int     `json:"max_consecutive_wakes,omitempty"`
 }
 
 type Config struct {
-	BaseURL                string                     `json:"base_url"`
-	APIKey                 string                     `json:"api_key,omitempty"`
-	Account                json.RawMessage            `json:"account,omitempty"`
-	Model                  string                     `json:"model"`
-	Thinking               string                     `json:"thinking"`
-	MaxTokens              int                        `json:"max_tokens"`
-	MaxSteps               int                        `json:"max_steps"`
-	Permission             string                     `json:"permission"`
-	ApprovalPolicy         string                     `json:"approval_policy"`
-	ExecutionMode          string                     `json:"execution_mode"`
-	AgentPreset            string                     `json:"agent_preset"`
-	SubagentMaxDepth       *int                       `json:"subagent_max_depth,omitempty"`
-	SubagentModelSelection json.RawMessage            `json:"subagent_model_selection,omitempty"`
-	NodePath               string                     `json:"node_path"`
-	Language               string                     `json:"language"`
-	ContextTokens          int                        `json:"context_tokens"`
-	MCPServers             map[string]MCPServer       `json:"mcp_servers,omitempty"`
-	ProviderProfiles       map[string]json.RawMessage `json:"provider_profiles,omitempty"`
-	SelectedProvider       string                     `json:"selected_provider"`
+	BaseURL                        string                     `json:"base_url"`
+	APIKey                         string                     `json:"api_key,omitempty"`
+	Account                        json.RawMessage            `json:"account,omitempty"`
+	Model                          string                     `json:"model"`
+	Thinking                       string                     `json:"thinking"`
+	MaxTokens                      int                        `json:"max_tokens"`
+	MaxSteps                       int                        `json:"max_steps"`
+	Permission                     string                     `json:"permission"`
+	ApprovalPolicy                 string                     `json:"approval_policy"`
+	ExecutionMode                  string                     `json:"execution_mode"`
+	AgentPreset                    string                     `json:"agent_preset"`
+	SubagentMaxDepth               *int                       `json:"subagent_max_depth,omitempty"`
+	SubagentMaxActive              int                        `json:"subagent_max_active"`
+	SubagentModelSelection         json.RawMessage            `json:"subagent_model_selection,omitempty"`
+	SubagentAgentPreset            string                     `json:"subagent_agent_preset,omitempty"`
+	SubagentAllowedAgentPresets    []string                   `json:"subagent_allowed_agent_presets,omitempty"`
+	NodePath                       string                     `json:"node_path"`
+	Language                       string                     `json:"language"`
+	ContextTokens                  int                        `json:"context_tokens"`
+	GoalDefaultMaxRounds           int                        `json:"goal_default_max_rounds"`
+	GoalBlockedAfterRounds         int                        `json:"goal_blocked_after_rounds"`
+	ScheduleDeliveryHistoryDays    int                        `json:"schedule_delivery_history_days"`
+	ScheduleDeliveryHistoryRecords int                        `json:"schedule_delivery_history_records"`
+	MCPServers                     map[string]MCPServer       `json:"mcp_servers,omitempty"`
+	ProviderProfiles               map[string]json.RawMessage `json:"provider_profiles,omitempty"`
+	SelectedProvider               string                     `json:"selected_provider"`
+	FileReferences                 *FileReferenceSettings     `json:"file_references,omitempty"`
+	SessionReferences              *SessionReferenceSettings  `json:"session_references,omitempty"`
+	Jobs                           *JobSettings               `json:"jobs,omitempty"`
+	UserTerminal                   *UserTerminalSettings      `json:"user_terminal,omitempty"`
+	TimeContext                    *TimeContextSettings       `json:"time_context,omitempty"`
 }
 
 func DefaultRoot() string {
@@ -62,7 +105,7 @@ func DefaultConfig() Config {
 		BaseURL: "https://api.deepseek.com/anthropic", Model: "deepseek-flash", Thinking: "high",
 		MaxTokens: 16384, MaxSteps: 100, Permission: "workspace-write", ApprovalPolicy: "on-request",
 		ExecutionMode: "native", AgentPreset: "standard", NodePath: "node", Language: "zh-CN", ContextTokens: 196608,
-		MCPServers:       map[string]MCPServer{},
+		MCPServers: map[string]MCPServer{}, SubagentMaxActive: 8, GoalDefaultMaxRounds: 256, GoalBlockedAfterRounds: 3, ScheduleDeliveryHistoryDays: 30, ScheduleDeliveryHistoryRecords: 200,
 		ProviderProfiles: map[string]json.RawMessage{}, SelectedProvider: "deepseek-official",
 	}
 }
@@ -115,8 +158,86 @@ func (c Config) WithEnvironment() Config {
 }
 
 func (c Config) Validate() error {
-	if c.SubagentMaxDepth != nil && *c.SubagentMaxDepth < 0 {
-		return errors.New("subagent_max_depth must be a non-negative integer")
+	if err := c.TimeContext.validate(); err != nil {
+		return err
+	}
+	if err := c.UserTerminal.validate(); err != nil {
+		return err
+	}
+	if c.ScheduleDeliveryHistoryDays < 1 || c.ScheduleDeliveryHistoryDays > 3650 || c.ScheduleDeliveryHistoryRecords < 1 || c.ScheduleDeliveryHistoryRecords > 10000 {
+		return errors.New("schedule delivery retention must be 1..3650 days and 1..10000 records")
+	}
+	if jobs := c.Jobs; jobs != nil {
+		wait, maximum := 30000.0, 600000.0
+		if jobs.WaitTimeoutMS != nil {
+			wait = *jobs.WaitTimeoutMS
+		}
+		if jobs.MaxWaitTimeoutMS != nil {
+			maximum = *jobs.MaxWaitTimeoutMS
+		}
+		if wait < 1 || maximum < 1 || math.IsNaN(wait) || math.IsNaN(maximum) || math.IsInf(wait, 0) || math.IsInf(maximum, 0) || wait > maximum {
+			return errors.New("job wait limits must be finite, positive and default must not exceed maximum")
+		}
+		if jobs.CompletionDelivery != "" && jobs.CompletionDelivery != "quiet" && jobs.CompletionDelivery != "wakeup" {
+			return errors.New("job completion delivery must be quiet or wakeup")
+		}
+		if cap := jobs.MaxConsecutiveWakes; cap != nil && (*cap < 1 || int64(*cap) > 9007199254740991) {
+			return errors.New("job wake cap must be a positive safe integer")
+		}
+	}
+	if c.GoalDefaultMaxRounds < 1 || c.GoalBlockedAfterRounds < 1 || int64(c.GoalDefaultMaxRounds) > 9007199254740991 || int64(c.GoalBlockedAfterRounds) > 9007199254740991 {
+		return errors.New("goal round limits must be positive safe integers")
+	}
+	if f := c.FileReferences; f != nil {
+		for _, value := range []*int{f.MaxResults, f.MaxEntries} {
+			if value != nil && (*value < 1 || int64(*value) > 9007199254740991) {
+				return errors.New("file reference limits must be positive safe integers")
+			}
+		}
+		if f.ExcludedDirectories != nil {
+			for _, name := range *f.ExcludedDirectories {
+				if name == "" || strings.ContainsAny(name, "/\\") {
+					return errors.New("excluded directories must be nonempty basenames")
+				}
+			}
+		}
+	}
+	if r := c.SessionReferences; r != nil {
+		for _, value := range []*int{r.MaxReferences, r.CandidateLimit, r.MaxReferenceBytes} {
+			if value != nil && (*value < 1 || int64(*value) > 9007199254740991) {
+				return errors.New("session reference limits must be positive safe integers")
+			}
+		}
+		if r.MaxReferences != nil && *r.MaxReferences > 3 {
+			return errors.New("at most three sessions may be referenced per message")
+		}
+		if fraction := r.ReferenceContextFraction; fraction != nil && (math.IsNaN(*fraction) || *fraction < 0 || *fraction > 1) {
+			return errors.New("reference context fraction must be in 0..1")
+		}
+	}
+	if c.SubagentMaxActive < 1 {
+		return errors.New("subagent_max_active must be a positive integer")
+	}
+	if c.SubagentAgentPreset != "" && !oneOf(c.SubagentAgentPreset, "standard", "ptc", "minimal", "cordis") {
+		return errors.New("subagent_agent_preset must name a supported preset")
+	}
+	if c.SubagentAllowedAgentPresets != nil {
+		if len(c.SubagentAllowedAgentPresets) == 0 {
+			return errors.New("subagent_allowed_agent_presets must not be empty")
+		}
+		seen := map[string]bool{}
+		for _, preset := range c.SubagentAllowedAgentPresets {
+			if !oneOf(preset, "standard", "ptc", "minimal", "cordis") || seen[preset] {
+				return errors.New("subagent_allowed_agent_presets must contain unique supported presets")
+			}
+			seen[preset] = true
+		}
+		if c.SubagentAgentPreset != "" && !seen[c.SubagentAgentPreset] {
+			return errors.New("subagent_agent_preset must be in subagent_allowed_agent_presets")
+		}
+	}
+	if c.SubagentMaxDepth != nil && (*c.SubagentMaxDepth < 0 || uint64(*c.SubagentMaxDepth) > 9007199254740991) {
+		return errors.New("subagent_max_depth must be a non-negative safe integer")
 	}
 	if len(c.SubagentModelSelection) > 0 && !json.Valid(c.SubagentModelSelection) {
 		return errors.New("subagent_model_selection must be JSON")
@@ -174,6 +295,24 @@ func (c Config) Validate() error {
 		}
 		if !s.Disabled && (s.Command == "") == (s.URL == "") {
 			return fmt.Errorf("MCP server %q requires exactly one of command and url", name)
+		}
+		if s.ToolCallTimeoutMS != nil && (*s.ToolCallTimeoutMS < 1 || *s.ToolCallTimeoutMS > 2147483647) {
+			return fmt.Errorf("MCP server %q tool_call_timeout_ms must be in 1..2147483647", name)
+		}
+		if s.MaxInstructionBytes != nil && *s.MaxInstructionBytes < 1 {
+			return fmt.Errorf("MCP server %q max_instruction_bytes must be positive", name)
+		}
+		if p := s.Reconnect; p != nil {
+			initial, maximum := 500, 30000
+			if p.InitialDelayMS != nil {
+				initial = *p.InitialDelayMS
+			}
+			if p.MaxDelayMS != nil {
+				maximum = *p.MaxDelayMS
+			}
+			if initial < 1 || maximum < 1 || initial > 2147483647 || maximum > 2147483647 || initial > maximum || (p.MaxAttempts != nil && *p.MaxAttempts < 1) {
+				return fmt.Errorf("MCP server %q has invalid reconnect policy", name)
+			}
 		}
 	}
 	return nil

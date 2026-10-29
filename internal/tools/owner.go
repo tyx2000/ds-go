@@ -2,6 +2,31 @@ package tools
 
 import "context"
 
+// HasPendingSessionJobs includes legacy processes and waits for notice handoff,
+// so a structured child cannot finish ahead of work it still owns.
+func (r *Registry) HasPendingSessionJobs(owner string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, job := range r.jobs {
+		if job.owner != owner {
+			continue
+		}
+		select {
+		case <-job.done:
+		default:
+			return true
+		}
+		if job.noticed != nil {
+			select {
+			case <-job.noticed:
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CancelSessionJobs disposes only this owner's detached processes. Registering
 // a wait before cancellation makes the teardown, rather than an automatic
 // completion notification, own each live job's settlement.

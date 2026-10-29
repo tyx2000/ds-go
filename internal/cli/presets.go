@@ -62,6 +62,11 @@ func (a *App) specsFor(s core.Session) []core.ToolSpec {
 		}
 		filtered = append(filtered, spec)
 	}
+	if a.engine != nil {
+		if spec, ok := a.engine.StructuredSpec(s.ID); ok {
+			filtered = append(filtered, spec)
+		}
+	}
 	return filtered
 }
 
@@ -86,14 +91,33 @@ func (a *App) ptcInstructions(s core.Session) string {
 }
 
 func (a *App) requestContext(ctx context.Context, s core.Session) ([]core.Message, error) {
-	if sessionPreset(s) == "minimal" {
-		return nil, nil
+	parts := []string{}
+	if sessionPreset(s) != "minimal" {
+		cwd, err := a.ensureWorkingDirectory(ctx, s.ID)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, workingDirectoryContext(cwd))
 	}
-	cwd, err := a.ensureWorkingDirectory(ctx, s.ID)
+	if s.Delegated {
+		parts = append(parts, "You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the task needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.")
+	}
+	depth, err := a.subagentDepth(s.ID)
 	if err != nil {
 		return nil, err
 	}
-	return []core.Message{core.TextMessage("user", workingDirectoryContext(cwd))}, nil
+	cap := a.subagentMaxDepth()
+	if depth >= cap {
+		for _, spec := range a.specsFor(s) {
+			if spec.Name == "subagent" || spec.Name == "subagent_fork" {
+				parts = append(parts, fmt.Sprintf("Delegation depth for `%s`: current %d, maximum %d, remaining levels 0. Do not call `%s` at this depth; carry out the work directly.", spec.Name, depth, cap, spec.Name))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	return []core.Message{core.TextMessage("user", strings.Join(parts, "\n\n"))}, nil
 }
 
 func (a *App) presetCommand(arg string) error {

@@ -48,12 +48,36 @@ partial UTF-8 in the line. The editor turns off echo and canonical mode for the
 duration of one line (signal keys keep working), deletes whole characters and
 erases their display width. It asks the terminal for the starting column so
 that deletions across wrapped rows redraw from the first input cell; without
-an answer it erases in place. Supported keys: Backspace, Ctrl+U, Ctrl+W,
-Ctrl+D on an empty line, and Ctrl+C, which clears the typed line. Editing is
-at the end of the line; cursor movement and history are not implemented, and
-output printed by background work while typing is not redrawn around the
-input. Pipes keep plain line reading. A `TERM=dumb` terminal is not sent the
+an answer it erases in place. Left/Right, Home/End, Ctrl+A/E/B/F, Delete and
+Backspace edit at the caret. Ctrl+Left/Right or Alt+B/F move by words;
+Ctrl+W/Alt+Backspace delete the previous word, Alt+D deletes the next word,
+Ctrl+U/K delete before/after the caret. Ctrl+D on an empty line ends input,
+and Ctrl+C clears the draft. Combining marks and common emoji sequences move
+and delete together. Bracketed paste preserves newlines without submitting.
+
+History is opt-in per read, bounded to 200 in-memory entries, and never written
+to a history file. Up/Down restore a partially typed draft after browsing.
+`ReadLineWithOptions` captures the prompt, history policy and completion provider
+for one broker request, so approval/question reads can disable both history and
+completion. Providers receive rune offsets and return a replacement range and
+display candidates. Tab opens a multi-candidate menu; arrows choose, Tab/Enter
+accept, and Escape/Shift+Tab dismiss without changing the draft. A single match
+completes immediately. Candidate labels are sanitized before display.
+
+`WriteAbove` coordinates asynchronous output with draft/caret restoration and
+keeps streamed fragments together above the prompt. Its caller must not hold the
+raw writer's lock. `Resize` and Unix SIGWINCH redraw the region at the current
+width. Full redraw needs an ANSI terminal and a cursor-position response;
+plain terminals retain in-place editing and print fallback completion rows.
+Pipes keep plain line reading. A `TERM=dumb` terminal is not sent the
 position query and always erases in place; inside Emacs (`INSIDE_EMACS`),
 where Emacs edits the line, prompts keep canonical reading. On a color-capable
 terminal the `dsgo>` and `...` prompts are bold cyan so input stands apart from
 output; `NO_COLOR`, dumb terminals and pipes keep them plain.
+
+The browser's complete reference-chip lifecycle, command-specific popups,
+group/drill-down menus and all composer settings are still separate alignment
+work. The terminal completion provider inserts ordinary text and never reads a
+file's contents merely because its path was selected. Sources:
+[ui-input-trigger](https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/client/ui-input-trigger/README.md),
+[ui-commands](https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/client/ui-commands/README.md).

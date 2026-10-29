@@ -32,6 +32,7 @@ type Message struct {
 	Content        []Block `json:"content"`
 	ReplayModel    string  `json:"replay_model,omitempty"`
 	ReplayProvider string  `json:"replay_provider,omitempty"`
+	ReplayIdentity string  `json:"replay_identity,omitempty"`
 }
 
 type ToolSpec struct {
@@ -50,6 +51,7 @@ type Usage struct {
 
 type Request struct {
 	Provider           string     `json:"-"`
+	ReplayIdentity     string     `json:"-"` // adapter-owned provenance, never sent to the provider
 	Model              string     `json:"model"`
 	System             string     `json:"-"`
 	Messages           []Message  `json:"messages"`
@@ -66,10 +68,11 @@ type Request struct {
 }
 
 type Response struct {
-	ID         string  `json:"id"`
-	Content    []Block `json:"content"`
-	StopReason string  `json:"stop_reason"`
-	Usage      Usage   `json:"usage"`
+	ReplayIdentity string  `json:"replay_identity,omitempty"`
+	ID             string  `json:"id"`
+	Content        []Block `json:"content"`
+	StopReason     string  `json:"stop_reason"`
+	Usage          Usage   `json:"usage"`
 }
 
 type Delta struct {
@@ -92,6 +95,7 @@ type Event struct {
 }
 
 type Session struct {
+	CreationLabel string    `json:"creation_label,omitempty"`
 	Preset        string    `json:"preset,omitempty"`
 	ExecutionMode string    `json:"execution_mode,omitempty"`
 	Delegated     bool      `json:"delegated,omitempty"`
@@ -131,8 +135,13 @@ type ToolContext struct {
 	SessionID      string
 	TurnID         string
 	CallID         string
+	ExecutionID    string     // unique top-level execution, inherited by nested dispatch
+	ExtraTools     []ToolSpec // activation-scoped bindings, absent outside their owner
 	Nested         bool
 	CWD            string
+	HarnessHome    string // trusted process data root for fresh-shell DSH_HOME
+	ProfileName    string // launcher profile, absent when no launcher owns one
+	ProfileDir     string
 	WorkspaceRoot  string // stable writable project root; changing CWD never expands this boundary
 	ExecutionMode  string // session-local native, ptc or ptc-repl
 	Permission     string // read-only, workspace-write, full-access

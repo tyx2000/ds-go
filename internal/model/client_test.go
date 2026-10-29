@@ -96,8 +96,10 @@ func TestNativePayloadAndSSEThinkingToolUse(t *testing.T) {
 
 func TestSerializeReplayAndImmediateToolResults(t *testing.T) {
 	input := request()
+	input.ReplayIdentity = "fixture-route-identity"
 	input.Thinking = "off"
 	input.Messages = []core.Message{core.TextMessage("user", "work"), {Role: "assistant", Content: []core.Block{{Type: "thinking", Thinking: "thought", Signature: "signature"}, {Type: "tool_use", ID: "c1", Name: "bash", Input: json.RawMessage(`[1]`)}}}, {Role: "user", Content: []core.Block{{Type: "text", Text: "next"}, {Type: "tool_result", ToolUseID: "c1", Content: "done", IsError: true}}}}
+	input.Messages[1].ReplayIdentity = input.ReplayIdentity
 	wire, err := serialize(input)
 	if err != nil {
 		t.Fatal(err)

@@ -61,11 +61,15 @@ func TestPresetsAdvertiseOfficialBashOutsideMinimal(t *testing.T) {
 	if got := run("run_shell", map[string]any{"command": "printf replay"}); !strings.Contains(got, "replay") {
 		t.Fatalf("run_shell replay: %q", got)
 	}
-	a.plan.Store(true)
-	if _, err := a.Execute(a.ctx, tc, "bash", core.JSON(map[string]any{"description": "Widen", "command": "true", "sandbox_permissions": "danger-full-access", "justification": "test"})); err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("plan mode escalation: %v", err)
+	if err := a.setPlan(parent.ID, true); err != nil {
+		t.Fatal(err)
 	}
-	a.plan.Store(false)
+	if got := run("bash", map[string]any{"description": "Plan shell contract", "command": "printf permission-kept"}); got != "permission-kept" {
+		t.Fatalf("plan changed shell permissions: %q", got)
+	}
+	if err := a.setPlan(parent.ID, false); err != nil {
+		t.Fatal(err)
+	}
 
 	parent.Preset = "minimal"
 	if err := a.store.Update(parent); err != nil {

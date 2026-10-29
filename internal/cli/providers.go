@@ -31,12 +31,16 @@ func (r modelRoutes) Stream(ctx context.Context, req core.Request, emit func(cor
 	return client.Stream(ctx, req, emit)
 }
 
-func buildModels(cfg state.Config) (core.Model, error) {
+func buildModels(cfg state.Config, replayKeys ...[]byte) (core.Model, error) {
+	var replayKey []byte
+	if len(replayKeys) > 0 {
+		replayKey = replayKeys[0]
+	}
 	key, token, err := credentials(cfg)
 	if err != nil {
 		return nil, err
 	}
-	routes := modelRoutes{clients: map[string]core.Model{"deepseek-official": model.New(model.Options{BaseURL: cfg.BaseURL, APIKey: key, Token: token})}, fallback: cfg.SelectedProvider}
+	routes := modelRoutes{clients: map[string]core.Model{"deepseek-official": model.New(model.Options{BaseURL: cfg.BaseURL, APIKey: key, Token: token, ReplayKey: replayKey})}, fallback: cfg.SelectedProvider}
 	if routes.fallback == "" {
 		routes.fallback = "deepseek-official"
 	}
@@ -48,6 +52,7 @@ func buildModels(cfg state.Config) (core.Model, error) {
 		if err = json.Unmarshal(raw, &options); err != nil {
 			return nil, fmt.Errorf("provider %s: %w", name, err)
 		}
+		options.ReplayKey = replayKey
 		var extra struct {
 			APIKeyEnv string `json:"api_key_env"`
 		}

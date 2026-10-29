@@ -1,0 +1,98 @@
+{
+  "officialCommit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "scope": "built-in shell facts and credential/DSH scrub; proxy overlay evaluated separately",
+  "cases": [
+    {
+      "name": "fresh-owner",
+      "kind": "fresh",
+      "parent": {
+        "PATH": "/bin",
+        "HOME": "/users/test",
+        "DEEPSEEK_API_KEY": "hidden",
+        "DSH_SESSION_ID": "stale",
+        "dsh_shell": "stale",
+        "NORMAL": "keep"
+      },
+      "home": "/data/harness",
+      "session": "owner-a",
+      "want": {
+        "DSH_HOME": "/data/harness",
+        "DSH_SHELL": "1",
+        "DSH_SESSION_ID": "owner-a"
+      }
+    },
+    {
+      "name": "fresh-no-agent",
+      "kind": "fresh",
+      "parent": {
+        "DSH_SESSION_ID": "stale"
+      },
+      "home": "/data/harness",
+      "want": {
+        "DSH_HOME": "/data/harness",
+        "DSH_SHELL": "1"
+      }
+    },
+    {
+      "name": "fresh-launch-profile",
+      "kind": "fresh",
+      "parent": {
+        "DSH_PROFILE": "stale"
+      },
+      "home": "/data/harness",
+      "session": "owner-b",
+      "profile": {
+        "name": "web",
+        "dir": "/data/profiles/web"
+      },
+      "want": {
+        "DSH_HOME": "/data/harness",
+        "DSH_SHELL": "1",
+        "DSH_SESSION_ID": "owner-b",
+        "DSH_PROFILE": "web",
+        "DSH_PROFILE_DIR": "/data/profiles/web"
+      }
+    },
+    {
+      "name": "persistent-owner",
+      "kind": "persistent",
+      "parent": {
+        "DSH_HOME": "stale",
+        "DSH_PROFILE": "stale",
+        "DSH_WEB_URL": "stale",
+        "SECRET": "hidden"
+      },
+      "session": "owner-a",
+      "pty": "pty-1",
+      "want": {
+        "DSH_SHELL": "1",
+        "DSH_SESSION_ID": "owner-a",
+        "DSH_PTY_SESSION_ID": "pty-1"
+      }
+    },
+    {
+      "name": "generic-process",
+      "kind": "generic",
+      "parent": {
+        "DSH_SESSION_ID": "stale",
+        "dsh_stale_parent": "stale",
+        "api_key": "hidden",
+        "ordinary": "keep"
+      },
+      "want": {}
+    },
+    {
+      "name": "host-terminal",
+      "kind": "host",
+      "parent": {
+        "DSH_HOME": "stale",
+        "DSH_SHELL": "stale",
+        "DSH_PTY_SESSION_ID": "stale"
+      },
+      "session": "host-owner",
+      "want": {
+        "DSH_SESSION_ID": "host-owner"
+      }
+    }
+  ]
+}

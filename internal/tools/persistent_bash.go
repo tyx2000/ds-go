@@ -24,6 +24,7 @@ const shellClippedMessage = "<response clipped><NOTE>To save on context only par
 type bashEnvironment struct {
 	gate            chan struct{}
 	mode, workspace string
+	ptySessionID    string
 	cmd             *exec.Cmd
 	pty             *os.File
 	chunks          chan string
@@ -46,7 +47,7 @@ func (e *bashEnvironment) stop() {
 
 func bashQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
-func newBashEnvironment(callCtx context.Context, tc core.ToolContext) (*bashEnvironment, error) {
+func newBashEnvironment(callCtx context.Context, tc core.ToolContext, ptyID string) (*bashEnvironment, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sc, err := makeToolCommand(ctx, tc, tc.Permission, "/bin/bash", "--noprofile", "--norc", "-i")
 	if err != nil {
@@ -54,13 +55,14 @@ func newBashEnvironment(callCtx context.Context, tc core.ToolContext) (*bashEnvi
 		return nil, err
 	}
 	sc.cmd.Env = append(filteredEnv(sc.cmd.Env, "PS1", "PS2", "PROMPT_COMMAND"), "PS1=", "PS2=", "PROMPT_COMMAND=", "TERM=dumb")
+	sc.cmd.Env = persistentShellEnvironment(sc.cmd.Env, tc.SessionID, ptyID)
 	f, err := startBashPTY(sc.cmd)
 	if err != nil {
 		cancel()
 		sc.cleanup()
 		return nil, err
 	}
-	e := &bashEnvironment{gate: make(chan struct{}, 1), mode: tc.Permission, workspace: workspaceRoot(tc), cmd: sc.cmd, pty: f, chunks: make(chan string, 64), done: make(chan struct{}), readDone: make(chan struct{}), cancel: cancel, cleanup: sc.cleanup}
+	e := &bashEnvironment{gate: make(chan struct{}, 1), mode: tc.Permission, workspace: workspaceRoot(tc), ptySessionID: ptyID, cmd: sc.cmd, pty: f, chunks: make(chan string, 64), done: make(chan struct{}), readDone: make(chan struct{}), cancel: cancel, cleanup: sc.cleanup}
 	go func() {
 		defer close(e.readDone)
 		buf := make([]byte, 8192)
@@ -150,7 +152,8 @@ func (r *Registry) persistentBash(ctx context.Context, tc core.ToolContext, raw 
 	}
 	if e == nil {
 		var err error
-		e, err = newBashEnvironment(ctx, tc)
+		r.nextManagedPTY++
+		e, err = newBashEnvironment(ctx, tc, fmt.Sprintf("pty-%d", r.nextManagedPTY))
 		if err != nil {
 			r.mu.Unlock()
 			return core.ToolResult{}, err

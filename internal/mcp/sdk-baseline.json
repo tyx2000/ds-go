@@ -1,0 +1,38 @@
+{
+  "official_harness_commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+  "package": "@modelcontextprotocol/client",
+  "version": "2.2.0",
+  "tarball": "https://registry.npmjs.org/@modelcontextprotocol/client/-/client-2.2.0.tgz",
+  "integrity": "sha512-LxCou/CSYQ6dwEnjhLZY0KnEuc8V4UJ3IEQCl/uR2yHobSQIEdJKUlKLRYRF5i5FqRGHy1eK7une3aAWDHLtig==",
+  "sha1": "95ccc22cccf717d23263a69fb66bb3035b9da8a4",
+  "source_repository": "https://github.com/modelcontextprotocol/typescript-sdk",
+  "source_commit": "dd22ba25ddbe7cd8822e1fe9c738a974996a28f6",
+  "source_provenance": "https://registry.npmjs.org/-/npm/v1/attestations/@modelcontextprotocol%2fclient@2.2.0",
+  "used_sources": [
+    "packages/client/src/client/versionNegotiation.ts",
+    "packages/client/src/client/probeClassifier.ts",
+    "packages/client/src/client/client.ts",
+    "packages/client/src/client/stdio.ts",
+    "packages/client/src/client/streamableHttp.ts",
+    "packages/core-internal/src/wire/rev2026-07-28/codec.ts",
+    "packages/core-internal/src/shared/mcpParamHeaders.ts",
+    "packages/core-internal/src/wire/rev2025-11-25/buildSchemas.ts",
+    "packages/core-internal/src/wire/rev2026-07-28/buildSchemas.ts",
+    "packages/core-internal/src/wire/resultFamilies.ts"
+  ],
+  "eventsource_parser": {
+    "version": "3.1.0",
+    "integrity": "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
+    "lockfile": "https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/pnpm-lock.yaml",
+    "parser_source": "https://github.com/rexxars/eventsource-parser/blob/v3.1.0/src/parse.ts",
+    "stream_source": "https://github.com/rexxars/eventsource-parser/blob/v3.1.0/src/stream.ts"
+  },
+  "fetch_behavior_source": "https://github.com/nodejs/undici/blob/v7.16.0/lib/web/fetch/index.js",
+  "zod": {
+    "version": "4.4.3",
+    "tarball": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
+    "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+    "sha1": "b680f172885d18bbebf21a834ea25e55a1bbf356",
+    "runtime_dependencies": {}
+  }
+}

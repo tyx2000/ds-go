@@ -21,27 +21,41 @@ import (
 type Handler func(context.Context, core.ToolContext, json.RawMessage) (core.ToolResult, error)
 type Dispatcher func(context.Context, core.ToolContext, string, json.RawMessage) (core.ToolResult, error)
 type definition struct {
-	spec core.ToolSpec
-	run  Handler
+	spec                   core.ToolSpec
+	run                    Handler
+	inputValidatedByServer bool
+}
+
+// Registration belongs to one replaceable source of tool definitions.
+type Registration struct {
+	Spec core.ToolSpec
+	Run  Handler
+	// InputValidatedByServer is used only by the fixed MCP bridge. Its raw
+	// schemas are forwarded to the model; the server owns argument validation.
+	InputValidatedByServer bool
 }
 
 type Registry struct {
-	mu           sync.RWMutex
-	definitions  map[string]definition
-	jobs         map[string]*job
-	environments map[string]*nodeEnvironment
-	shells       map[string]*bashEnvironment
-	observations map[string]map[string]fileObservation
-	spillDir     string
-	nodePath     string
-	ptcMode      string
-	dispatcher   Dispatcher
-	notifier     func(JobNotice)
-	closed       bool
+	mu             sync.RWMutex
+	definitions    map[string]definition
+	groups         map[string]map[string]bool
+	jobs           map[string]*job
+	environments   map[string]*nodeEnvironment
+	shells         map[string]*bashEnvironment
+	nextManagedPTY uint64 // model persistent-terminal IDs, under mu; never Host user terminals
+	observations   map[string]map[string]fileObservation
+	spillDir       string
+	nodePath       string
+	ptcMode        string
+	dispatcher     Dispatcher
+	notifier       func(JobNotice)
+	closed         bool
+	jobWaitDefault float64
+	jobWaitCap     float64
 }
 
 func New() *Registry {
-	r := &Registry{definitions: make(map[string]definition), jobs: make(map[string]*job), environments: make(map[string]*nodeEnvironment), shells: make(map[string]*bashEnvironment), observations: make(map[string]map[string]fileObservation), ptcMode: "per-call"}
+	r := &Registry{definitions: make(map[string]definition), groups: make(map[string]map[string]bool), jobs: make(map[string]*job), environments: make(map[string]*nodeEnvironment), shells: make(map[string]*bashEnvironment), observations: make(map[string]map[string]fileObservation), ptcMode: "per-call"}
 	r.builtins()
 	r.officialFiles()
 	r.standardShell()
@@ -61,6 +75,62 @@ func (r *Registry) Register(spec core.ToolSpec, run Handler) error {
 		return fmt.Errorf("tool %q already registered", spec.Name)
 	}
 	r.definitions[spec.Name] = definition{spec: spec, run: run}
+	return nil
+}
+
+// ReplaceGroup publishes a complete discovery generation under one lock. An
+// invalid discovery keeps the previous generation. A registration collision
+// removes the old generation and publishes none of the attempted generation,
+// matching the official MCP bridge's dispose/register/rollback boundary.
+func (r *Registry) ReplaceGroup(group string, entries []Registration) error {
+	if group == "" {
+		return errors.New("tool group is required")
+	}
+	next := make(map[string]definition, len(entries))
+	for _, entry := range entries {
+		spec := entry.Spec
+		if spec.Name == "" || entry.Run == nil {
+			return errors.New("invalid tool definition")
+		}
+		if _, exists := next[spec.Name]; exists {
+			return fmt.Errorf("duplicate tool %q in discovery", spec.Name)
+		}
+		if entry.InputValidatedByServer {
+			if !json.Valid(spec.InputSchema) {
+				return fmt.Errorf("tool %q has invalid schema JSON", spec.Name)
+			}
+		} else if _, err := jsonschema.Compile(spec.InputSchema); err != nil {
+			return fmt.Errorf("tool %q schema: %w", spec.Name, err)
+		}
+		spec.InputSchema = bytes.Clone(spec.InputSchema)
+		next[spec.Name] = definition{spec: spec, run: entry.Run, inputValidatedByServer: entry.InputValidatedByServer}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("tool registry closed")
+	}
+	for name := range r.groups[group] {
+		delete(r.definitions, name)
+	}
+	delete(r.groups, group)
+	for name := range next {
+		if _, exists := r.definitions[name]; exists {
+			return fmt.Errorf("tool %q already registered", name)
+		}
+	}
+	if len(next) == 0 {
+		return nil
+	}
+	names := make(map[string]bool, len(next))
+	for name, d := range next {
+		r.definitions[name] = d
+		names[name] = true
+	}
+	if r.groups == nil {
+		r.groups = make(map[string]map[string]bool)
+	}
+	r.groups[group] = names
 	return nil
 }
 
@@ -115,8 +185,10 @@ func (r *Registry) Execute(ctx context.Context, tc core.ToolContext, name string
 	if !ok {
 		return core.ToolResult{}, fmt.Errorf("unknown tool: %s", name)
 	}
-	if err := validate(d.spec.InputSchema, input); err != nil {
-		return core.ToolResult{}, fmt.Errorf("%s: %w", name, err)
+	if !d.inputValidatedByServer {
+		if err := validate(d.spec.InputSchema, input); err != nil {
+			return core.ToolResult{}, fmt.Errorf("%s: %w", name, err)
+		}
 	}
 	return d.run(ctx, tc, bytes.Clone(input))
 }

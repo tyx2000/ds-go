@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -299,34 +298,20 @@ func TestSubagentAuditFailurePreventsModelDispatch(t *testing.T) {
 	}
 }
 
-func TestPlanModeRejectsEscalationAndAllowsReadOnlyInvestigation(t *testing.T) {
+func TestPlanModeKeepsSandboxPermissionsIndependent(t *testing.T) {
 	a, parent := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
 		return core.Response{}, nil
 	}))
-	parent.Preset = "ptc"
-	parent.ExecutionMode = "ptc"
-	if err := a.store.Update(parent); err != nil {
+	if err := a.setPlan(parent.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	a.plan.Store(true)
-	tc := core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, Permission: "full-access", ApprovalPolicy: "on-request", Approve: func(context.Context, core.Approval) (bool, error) {
-		t.Error("plan mode requested an escalation")
-		return true, nil
-	}}
-	for _, name := range []string{"run_code", "run_shell"} {
-		_, err := a.Execute(a.ctx, tc, name, json.RawMessage(`{"code":"return 1","command":"true","sandbox":"full-access"}`))
-		if err == nil || !strings.Contains(err.Error(), "read-only") {
-			t.Fatalf("%s escalation: %v", name, err)
-		}
+	tc := core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, Permission: "full-access", ApprovalPolicy: "never"}
+	args := core.JSON(map[string]any{"file_path": "planned.txt", "content": "actual write"})
+	if _, err := a.Execute(a.ctx, tc, "write", args); err != nil {
+		t.Fatalf("plan guidance filtered a callable tool: %v", err)
 	}
-	if _, err := a.Execute(a.ctx, tc, "write_file", core.JSON(map[string]string{"path": "forbidden", "content": "mutation"})); err == nil {
-		t.Fatal("plan mode allowed a file write")
-	}
-	// The plan boundary must admit investigation. The platform sandbox may be
-	// unavailable under an outer sandbox, but it must fail closed there rather
-	// than reject every PTC/Shell call as a plan-mode mutation.
-	_, err := a.Execute(a.ctx, tc, "run_shell", json.RawMessage(`{"command":"printf read-only"}`))
-	if err != nil && strings.Contains(err.Error(), "plan mode prevents") {
-		t.Fatalf("read-only investigation blocked: %v", err)
+	tc.Permission = "read-only"
+	if _, err := a.Execute(a.ctx, tc, "write", core.JSON(map[string]any{"file_path": "denied.txt", "content": "must fail"})); err == nil {
+		t.Fatal("plan mode bypassed the independent read-only sandbox")
 	}
 }

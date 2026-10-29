@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +16,16 @@ import (
 )
 
 var ErrSessionExpired = errors.New("MCP HTTP session expired; reconnect before the next call")
+var ErrHTTPTransport = errors.New("MCP HTTP transport request failed")
+
+type HTTPStatusError struct {
+	StatusCode int
+	Body       json.RawMessage
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("MCP HTTP server returned status %d", e.StatusCode)
+}
 
 type httpTransport struct {
 	url       string
@@ -40,38 +49,63 @@ func newHTTP(endpoint string, headers map[string]string) (*httpTransport, error)
 }
 
 func (h *httpTransport) request(ctx context.Context, method string, message []byte, protocol string) (*http.Response, error) {
+	return h.requestWithResume(ctx, method, message, protocol, "")
+}
+
+func (h *httpTransport) requestWithResume(ctx context.Context, method string, message []byte, protocol, lastEventID string, extra ...map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, h.url, bytes.NewReader(message))
 	if err != nil {
 		return nil, err
 	}
 	for key, value := range h.headers {
 		req.Header.Set(key, value)
+		if strings.EqualFold(key, "Host") {
+			req.Host = value
+		}
 	}
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if protocol == "" {
-		protocol = ProtocolVersion
+	if method == http.MethodGet {
+		req.Header.Set("Accept", "text/event-stream")
 	}
-	req.Header.Set("MCP-Protocol-Version", protocol)
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	if protocol != "" {
+		req.Header.Set("MCP-Protocol-Version", protocol)
+	}
+	applyModernHeaders(req, message)
+	for _, headers := range extra {
+		for name, value := range headers {
+			if strings.HasPrefix(strings.ToLower(name), "mcp-param-") {
+				req.Header.Set(name, value)
+			}
+		}
+	}
 	h.mu.Lock()
 	session := h.sessionID
 	h.mu.Unlock()
 	if session != "" {
 		req.Header.Set("Mcp-Session-Id", session)
 	}
-	res, err := h.client.Do(req)
+	var outbound wire
+	if len(message) > 0 && json.Unmarshal(message, &outbound) == nil && outbound.Method == "initialize" {
+		req.Header.Del("Mcp-Session-Id")
+	}
+	res, err := h.fetch(req)
 	if err != nil {
-		return nil, errors.New("MCP HTTP transport request failed")
+		return nil, ErrHTTPTransport
 	}
 	if res.StatusCode == http.StatusNotFound && session != "" {
 		res.Body.Close()
 		return nil, ErrSessionExpired
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(res.Body)
 		res.Body.Close()
-		return nil, fmt.Errorf("MCP HTTP server returned status %d", res.StatusCode)
+		return nil, &HTTPStatusError{StatusCode: res.StatusCode, Body: body}
 	}
 	return res, nil
 }
@@ -91,53 +125,46 @@ func (c *Client) httpCall(ctx context.Context, message wire, out any) error {
 	if err != nil {
 		return err
 	}
-	if len(b) > maxFrameBytes {
-		return errors.New("MCP message exceeds 8 MiB")
-	}
-	res, err := c.http.request(ctx, http.MethodPost, b, c.ProtocolVersion)
+	headers, _ := ctx.Value(paramHeadersContextKey{}).(map[string]string)
+	res, err := c.http.requestWithResume(ctx, http.MethodPost, b, c.ProtocolVersion, "", headers)
 	if err != nil {
 		if ctx.Err() != nil {
 			c.cancelHTTP(message)
 			return ctx.Err()
 		}
+		if c.modern() {
+			if rpc := matchingHTTPError(err, message); rpc != nil {
+				return rpc
+			}
+		}
 		return err
 	}
 	defer res.Body.Close()
 	if message.Method == "initialize" {
-		if session := res.Header.Get("Mcp-Session-Id"); session != "" {
+		session := res.Header.Get("Mcp-Session-Id")
+		if session != "" {
 			for _, r := range session {
 				if r < 0x21 || r > 0x7e {
 					return errors.New("MCP returned invalid HTTP session ID")
 				}
 			}
-			c.http.mu.Lock()
-			c.http.sessionID = session
-			c.http.mu.Unlock()
 		}
+		c.http.mu.Lock()
+		c.http.sessionID = session
+		c.http.mu.Unlock()
 	}
 	typeName, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
 	reply := func(answer wire) error { return c.httpNotify(ctx, answer) }
 	switch typeName {
 	case "application/json":
-		b, readErr := io.ReadAll(io.LimitReader(res.Body, maxFrameBytes+1))
+		b, readErr := io.ReadAll(res.Body)
 		if readErr != nil {
 			err = readErr
 			break
 		}
-		if len(b) > maxFrameBytes {
-			return errors.New("MCP HTTP JSON frame exceeds 8 MiB")
-		}
 		err = c.handle(b, reply)
 	case "text/event-stream":
-		err = readSSE(res.Body, func(b []byte) error {
-			if err := c.handle(b, reply); err != nil {
-				return err
-			}
-			if len(ch) > 0 {
-				return io.EOF
-			}
-			return nil
-		})
+		err = c.readHTTPReplyStream(ctx, res, ch, reply)
 	default:
 		return fmt.Errorf("unsupported MCP HTTP content type %q", typeName)
 	}
@@ -167,7 +194,7 @@ func (c *Client) httpCall(ctx context.Context, message wire, out any) error {
 }
 
 func (c *Client) cancelHTTP(message wire) {
-	if message.Method == "initialize" {
+	if message.Method == "initialize" || message.Method == "server/discover" || c.modern() {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
@@ -187,61 +214,6 @@ func (c *Client) httpNotify(ctx context.Context, message wire) error {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusAccepted && res.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("MCP HTTP notification returned status %d, expected 202", res.StatusCode)
-	}
-	return nil
-}
-
-func readSSE(reader io.Reader, emit func([]byte) error) error {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64<<10), maxFrameBytes)
-	var data []byte
-	total := 0
-	flush := func() error {
-		if len(data) == 0 {
-			return nil
-		}
-		err := emit(bytes.TrimSuffix(data, []byte{'\n'}))
-		data = nil
-		return err
-	}
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		total += len(line)
-		if total > 64<<20 {
-			return errors.New("MCP SSE response exceeds 64 MiB")
-		}
-		if len(line) == 0 {
-			if err := flush(); err != nil {
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
-				return err
-			}
-			continue
-		}
-		if line[0] == ':' {
-			continue
-		}
-		key, value, ok := bytes.Cut(line, []byte{':'})
-		if !ok {
-			continue
-		}
-		if len(value) > 0 && value[0] == ' ' {
-			value = value[1:]
-		}
-		if string(key) == "data" {
-			data = append(data, value...)
-			data = append(data, '\n')
-			if len(data) > maxFrameBytes {
-				return errors.New("MCP SSE event exceeds 8 MiB")
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	if err := flush(); !errors.Is(err, io.EOF) {
-		return err
 	}
 	return nil
 }

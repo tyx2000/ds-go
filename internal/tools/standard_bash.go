@@ -559,7 +559,13 @@ func (r *Registry) startStandardBash(tc core.ToolContext, a standardBashArgs, mo
 		cancel()
 		return nil, err
 	}
-	sc.cmd.Env = append(filteredEnv(sc.cmd.Env, "BASH_ENV", "ENV", "NO_COLOR", "TERM", "PAGER", "GIT_PAGER"), "NO_COLOR=1", "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat")
+	sc.cmd.Env = append(filteredEnv(sc.cmd.Env, "NO_COLOR", "TERM", "PAGER", "GIT_PAGER"), "NO_COLOR=1", "TERM=dumb", "PAGER=cat", "GIT_PAGER=cat")
+	sc.cmd.Env, err = freshShellEnvironment(sc.cmd.Env, tc)
+	if err != nil {
+		cancel()
+		sc.cleanup()
+		return nil, err
+	}
 	st := &standardBashState{description: a.Description, cwd: tc.CWD, mode: mode, backend: sc.backend, status: "running", stdout: &streamCapture{dir: dir}, stderr: &streamCapture{dir: dir}}
 	combined := &boundedBuffer{limit: maxOutputBytes}
 	sc.cmd.Stdout = io.MultiWriter(st.stdout, combined)
@@ -628,9 +634,13 @@ func (r *Registry) SetJobNotifier(notify func(JobNotice)) {
 }
 
 // CompletionNotice renders the official settlement notice and its context summary.
-func CompletionNotice(id, kind, label, status, detail string) JobNotice {
+func CompletionNotice(id, kind, label, status, detail string, outputLimitBytes ...int) JobNotice {
 	line := statusLine(publicJob{Status: status, Detail: detail})
-	return JobNotice{Text: fmt.Sprintf("background job %s (%s: %s) finished %s. Read its output with job_output.", id, kind, label, line), Summary: kind + " " + label + " " + line}
+	limit := 0
+	if len(outputLimitBytes) > 0 {
+		limit = outputLimitBytes[0]
+	}
+	return JobNotice{Text: fitCompletionNotice(id, kind, label, line, limit), Summary: core.BoundContextSummary(kind + " " + label + " " + line)}
 }
 
 func (r *Registry) settled(j *job, awaited bool) {
@@ -639,13 +649,13 @@ func (r *Registry) settled(j *job, awaited bool) {
 	notify, closed := r.notifier, r.closed
 	r.mu.RUnlock()
 	j.mu.Lock()
-	killed := j.killedByModel
+	killed, limit := j.killedByModel, j.outputLimitBytes
 	j.mu.Unlock()
 	if notify == nil || closed || awaited || killed || j.owner == "" {
 		return
 	}
 	p := j.public()
-	n := CompletionNotice(p.ID, p.Kind, p.Label, p.Status, p.Detail)
+	n := CompletionNotice(p.ID, p.Kind, p.Label, p.Status, p.Detail, limit)
 	n.Owner = j.owner
 	notify(n)
 }
@@ -769,13 +779,7 @@ func (r *Registry) ownedJob(tc core.ToolContext, id string) (*job, error) {
 
 // JobWait resolves job_output's wait from its timeout_ms argument.
 func JobWait(timeoutMS *float64) (time.Duration, error) {
-	if timeoutMS == nil {
-		return jobWaitMS * time.Millisecond, nil
-	}
-	if *timeoutMS <= 0 || math.IsInf(*timeoutMS, 0) {
-		return 0, fmt.Errorf("invalid timeout_ms: expected a positive number, got %s", strconv.FormatFloat(*timeoutMS, 'f', -1, 64))
-	}
-	return time.Duration(min(math.Ceil(*timeoutMS), jobMaxWaitMS)) * time.Millisecond, nil
+	return resolveJobWait(timeoutMS, jobWaitMS, jobMaxWaitMS)
 }
 
 func (r *Registry) jobOutput(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
@@ -792,7 +796,7 @@ func (r *Registry) jobOutput(ctx context.Context, tc core.ToolContext, raw json.
 		return core.ToolResult{}, err
 	}
 	if a.Wait {
-		wait, err := JobWait(a.TimeoutMS)
+		wait, err := r.JobWait(a.TimeoutMS)
 		if err != nil {
 			return core.ToolResult{}, err
 		}
@@ -802,7 +806,7 @@ func (r *Registry) jobOutput(ctx context.Context, tc core.ToolContext, raw json.
 	}
 	// A settled projection implies every byte was written before the read.
 	snapshot := j.public()
-	return result(map[string]any{"text": j.modelRead(), "job": snapshot}), nil
+	return jobResult(map[string]any{"text": j.modelRead(), "job": snapshot}), nil
 }
 
 func (r *Registry) jobList(_ context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
@@ -854,7 +858,7 @@ func (r *Registry) jobKill(_ context.Context, tc core.ToolContext, raw json.RawM
 		j.killedByModel = false
 		j.mu.Unlock()
 	}
-	return result(map[string]any{"outcome": outcome, "job": j.public()}), nil
+	return jobResult(map[string]any{"outcome": outcome, "job": j.public()}), nil
 }
 
 // RenderShellResult turns canonical bash and job_* values into model text.

@@ -311,15 +311,18 @@ func jsonObject(data []byte) bool {
 }
 
 func replayMatches(message core.Message, input core.Request) bool {
+	// A provider name can be rebound to a different endpoint or credential.
+	// Missing provenance is foreign, including logs written before this field.
+	if !sameReplayIdentity(message.ReplayIdentity, input.ReplayIdentity) {
+		return false
+	}
 	if message.ReplayModel != "" && message.ReplayModel != input.Model {
 		return false
 	}
 	if message.ReplayProvider != "" && input.Provider != "" && message.ReplayProvider != input.Provider {
 		return false
 	}
-	// Sessions written before provider metadata existed came from the direct
-	// DeepSeek client. Never trust their opaque state on a generic route.
-	return message.ReplayProvider != "" || input.Provider == "" || input.Provider == "deepseek-official"
+	return true
 }
 
 func inputBlock(block core.Block) (core.Block, bool, error) {

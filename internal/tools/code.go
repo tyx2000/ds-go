@@ -148,12 +148,7 @@ func (r *Registry) runCode(ctx context.Context, tc core.ToolContext, input json.
 		_, err = stdin.Write(append(b, '\n'))
 		return err
 	}
-	names := []string{}
-	for _, s := range r.Specs() {
-		if s.Name != "run_code" {
-			names = append(names, s.Name)
-		}
-	}
+	names := r.ptcBindingNames(tc.ExtraTools)
 	if err := write(map[string]any{"code": a.Code, "tools": names}); err != nil {
 		cancel()
 		_ = sc.cmd.Wait()

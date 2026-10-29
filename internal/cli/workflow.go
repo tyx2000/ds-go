@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,9 +68,9 @@ func (a *App) workflowTool(ctx context.Context, tc core.ToolContext, raw json.Ra
 		return core.ToolResult{}, err
 	}
 	if background {
-		a.workflowNotices.started()
+		a.workflowNotices.started(tc.SessionID)
 		go func() {
-			defer a.workflowNotices.finished()
+			defer a.workflowNotices.finished(tc.SessionID)
 			_, _ = run.Wait(context.Background())
 			run.Dispose()
 			a.notice(agent.Notice{SessionID: tc.SessionID, Type: "job/completed", Data: run.JobSnapshot(0, false)})
@@ -143,12 +144,19 @@ func (a *App) workflowChild(ctx context.Context, parentID string, req workflow.C
 		_ = a.store.Delete(session.ID)
 		return workflow.ChildResult{}, err
 	}
+	releaseGoalOwnership := a.ownGoalActivation(session.ID, parentID)
+	defer releaseGoalOwnership()
 	published(session.ID)
-	prompt := req.Prompt
+	var structured *agent.StructuredRun
 	if len(req.Schema) > 0 {
-		prompt += "\n\nReturn only one JSON object matching this output schema, without Markdown fences:\n" + string(req.Schema)
+		var release func()
+		structured, release, err = a.engine.AttachStructured(session.ID, req.Schema, func() bool { return a.canCompleteWorkflowMember(ctx, session.ID) })
+		if err != nil {
+			return workflow.ChildResult{}, err
+		}
+		defer release()
 	}
-	err = a.engine.Run(ctx, session.ID, core.TextMessage("user", prompt))
+	err = a.engine.Run(ctx, session.ID, core.TextMessage("user", req.Prompt))
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cleanupCancel()
 	if cleanupErr := a.disposeOwner(cleanupCtx, session.ID); cleanupErr != nil {
@@ -181,17 +189,50 @@ func (a *App) workflowChild(ctx context.Context, parentID string, req workflow.C
 		}
 	}
 	result := workflow.ChildResult{Text: text.String(), StopReason: "completed"}
-	if len(req.Schema) > 0 {
-		var structured any
-		if err = json.Unmarshal([]byte(result.Text), &structured); err != nil {
+	if structured != nil {
+		captured, ok := structured.Captured()
+		if !ok {
 			return workflow.ChildResult{StopReason: "failed"}, nil
 		}
-		if err = workflow.ValidateStructured(req.Schema, structured); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(captured))
+		decoder.UseNumber()
+		var value any
+		if err = decoder.Decode(&value); err != nil {
 			return workflow.ChildResult{StopReason: "failed"}, nil
 		}
-		result.Structured = structured
+		if err = workflow.ValidateStructured(req.Schema, value); err != nil {
+			return workflow.ChildResult{StopReason: "failed"}, nil
+		}
+		result.Structured = value
 	}
 	return result, nil
+}
+
+func (a *App) canCompleteWorkflowMember(ctx context.Context, id string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	owners := []string{id}
+	if a.manager != nil {
+		if !a.manager.canCompleteStructured(id) {
+			return false
+		}
+		a.manager.mu.Lock()
+		owners = append(owners, a.manager.descendantsLocked(id)...)
+		a.manager.mu.Unlock()
+	}
+	for _, owner := range owners {
+		if a.registry != nil && a.registry.HasPendingSessionJobs(owner) {
+			return false
+		}
+		if a.workflows != nil && a.workflows.HasPendingOwner(owner) {
+			return false
+		}
+		if a.workflowNotices.busyOwner(owner) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
 }
 
 // disposeOwner quiesces resources owned by one completed session without
@@ -288,17 +329,31 @@ type workflowJobNotices struct {
 	waiters map[string]int
 	quiet   map[string]bool // a live wait or the model's own kill already delivered it
 	pending int             // background runs whose notice is not handled yet
+	owners  map[string]int
 }
 
-func (w *workflowJobNotices) started() {
+func (w *workflowJobNotices) started(owner string) {
 	w.mu.Lock()
 	w.pending++
+	if w.owners == nil {
+		w.owners = map[string]int{}
+	}
+	w.owners[owner]++
 	w.mu.Unlock()
 }
-func (w *workflowJobNotices) finished() {
+func (w *workflowJobNotices) finished(owner string) {
 	w.mu.Lock()
 	w.pending--
+	w.owners[owner]--
+	if w.owners[owner] == 0 {
+		delete(w.owners, owner)
+	}
 	w.mu.Unlock()
+}
+func (w *workflowJobNotices) busyOwner(owner string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.owners[owner] > 0
 }
 func (w *workflowJobNotices) busy() bool {
 	w.mu.Lock()
@@ -364,7 +419,7 @@ func (a *App) deliverJobNotice(n tools.JobNotice) {
 		return
 	}
 	message := core.Message{Role: "user", Content: []core.Block{{Type: "text", Text: n.Text}}, Source: map[string]any{"kind": "tool-jobs", "form": "notice", "summary": n.Summary}}
-	if _, err := a.manager.deliver(a.ctx, n.Owner, message, true); err != nil && !errors.Is(err, errManagerClosing) && a.ctx.Err() == nil {
+	if _, err := a.deliverJobCompletion(n.Owner, message); err != nil && !errors.Is(err, errManagerClosing) && a.ctx.Err() == nil {
 		a.line("[job notice for %s could not be delivered: %s]\n", n.Owner, clean(err.Error()))
 	}
 }
@@ -418,7 +473,7 @@ func (a *App) workflowJobControls(ctx context.Context, tc core.ToolContext, name
 		return toolValue(map[string]any{"outcome": outcome, "job": publicWorkflowJob(run.Snapshot())}), true, nil
 	}
 	if input.Wait {
-		wait, err := tools.JobWait(input.TimeoutMS)
+		wait, err := a.registry.JobWait(input.TimeoutMS)
 		if err != nil {
 			return core.ToolResult{}, true, err
 		}

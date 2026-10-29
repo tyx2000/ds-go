@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"dsgo/internal/core"
 	"dsgo/internal/schedule"
@@ -45,17 +44,17 @@ func (a *App) config(args []string) int {
 	raw := core.JSON(a.cfg)
 	var obj map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &obj)
-	if _, ok := obj[key]; !ok && key != "api_key" && key != "mcp_servers" && key != "provider_profiles" && key != "subagent_max_depth" && key != "subagent_model_selection" {
+	if _, ok := obj[key]; !ok && key != "api_key" && key != "mcp_servers" && key != "provider_profiles" && key != "subagent_max_depth" && key != "subagent_model_selection" && key != "subagent_agent_preset" && key != "subagent_allowed_agent_presets" && key != "file_references" && key != "session_references" && key != "jobs" && key != "user_terminal" && key != "time_context" {
 		return a.fail(fmt.Errorf("unknown config key %q", key))
 	}
 	switch key {
-	case "max_tokens", "max_steps", "context_tokens", "subagent_max_depth":
+	case "max_tokens", "max_steps", "context_tokens", "subagent_max_depth", "subagent_max_active", "goal_default_max_rounds", "goal_blocked_after_rounds", "schedule_delivery_history_days", "schedule_delivery_history_records":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return a.fail(err)
 		}
 		obj[key] = core.JSON(n)
-	case "mcp_servers", "provider_profiles", "subagent_model_selection":
+	case "mcp_servers", "provider_profiles", "subagent_model_selection", "subagent_allowed_agent_presets", "file_references", "session_references", "jobs", "user_terminal", "time_context":
 		if !json.Valid([]byte(value)) {
 			return a.fail(errors.New("configuration value must be JSON"))
 		}
@@ -144,6 +143,11 @@ func (a *App) sessions(args []string) error {
 		a.line("%s", clean(string(b)))
 		return nil
 	case "delete":
+		if a.hostTerminals != nil {
+			if err := a.hostTerminals.CloseOwner(a.ctx, id); err != nil {
+				return err
+			}
+		}
 		return a.store.Delete(id)
 	case "rename", "archive", "unarchive":
 		s, err := a.store.Get(id)
@@ -411,14 +415,19 @@ func (a *App) slash(line string) (bool, error) {
 		a.print(map[string]any{"session": s, "events": len(events), "plan": a.plan.Load(), "mode": a.sessionMode(s), "preset": sessionPreset(s)})
 		return false, nil
 	case "plan":
-		switch arg {
-		case "on":
-			return false, a.setPlan(a.session.ID, true)
-		case "off":
+		if strings.TrimSpace(arg) == "off" {
+			if len(a.attachments) > 0 {
+				return false, errors.New("attachments cannot accompany /plan off")
+			}
 			return false, a.setPlan(a.session.ID, false)
-		default:
-			a.line("plan=%v; /plan on or /plan off\n", a.plan.Load())
 		}
+		if err := a.setPlan(a.session.ID, true); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(arg) != "" || len(a.attachments) > 0 {
+			return false, a.turn(arg)
+		}
+		a.line("Plan mode selected; /plan off to leave.\n")
 		return false, nil
 	case "skills":
 		if arg == "" {
@@ -449,14 +458,7 @@ func (a *App) slash(line string) (bool, error) {
 		}
 		return false, a.invoke("jobs", p)
 	case "terminal":
-		if arg == "" {
-			return false, a.invoke("terminal", map[string]any{"action": "list"})
-		}
-		var p map[string]any
-		if err := json.Unmarshal([]byte(arg), &p); err != nil {
-			return false, err
-		}
-		return false, a.invoke("terminal", p)
+		return false, a.terminalCommand(arg)
 	case "agents":
 		a.print(a.manager.list(a.session.ID))
 		return false, nil
@@ -582,63 +584,8 @@ func (a *App) daemon() error {
 	ctx, cancel := signalContext(a.ctx)
 	defer func() { cancel(); a.background.Wait() }()
 	a.line("dsgo schedule daemon: %s\n", a.flags.home)
-	return a.schedules.RunWithStart(ctx, a.recoverScheduled, func(deliveryCtx context.Context, t schedule.Task) error {
-		session, err := a.store.Get(t.SessionID)
-		if err != nil {
-			return err
-		}
-		if session.Archived {
-			return errors.New("target session is archived")
-		}
-		accepted, err := a.hasDelivery(t.SessionID, t.Pending)
-		if err != nil {
-			return err
-		}
-		if accepted {
-			return a.acknowledgeDelivery(ctx, t)
-		}
-		admitted := make(chan struct{})
-		a.receipts.Store(t.Pending, admitted)
-		defer a.receipts.Delete(t.Pending)
-		prompt := t.Prompt
-		if t.PendingPrompt != nil {
-			prompt = *t.PendingPrompt
-		}
-		input := core.TextMessage("user", "Scheduled reminder ("+t.PendingAt.UTC().Format(time.RFC3339)+"):\n"+prompt)
-		input.DeliveryID = t.Pending
-		done := make(chan error, 1)
-		turnCtx, cancelTurn := context.WithCancel(ctx)
-		a.background.Add(1)
-		go func() {
-			defer a.background.Done()
-			defer cancelTurn()
-			err := a.engine.Run(turnCtx, t.SessionID, input)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				a.line("Schedule %s turn stopped: %s\n", t.ID, clean(err.Error()))
-			}
-			done <- err
-		}()
-		select {
-		case <-admitted:
-			return a.acknowledgeDelivery(ctx, t)
-		case err := <-done:
-			accepted, readErr := a.hasDelivery(t.SessionID, t.Pending)
-			if readErr != nil {
-				return readErr
-			}
-			if accepted {
-				return a.acknowledgeDelivery(ctx, t)
-			}
-			return err
-		case <-deliveryCtx.Done():
-			select {
-			case <-admitted:
-				return a.acknowledgeDelivery(ctx, t)
-			default:
-				cancelTurn()
-				return deliveryCtx.Err()
-			}
-		}
+	return a.schedules.RunBatchesWithStart(ctx, a.recoverScheduled, func(deliveryCtx context.Context, batch schedule.DeliveryBatch) error {
+		return a.admitScheduleBatch(deliveryCtx, ctx, batch)
 	})
 }
 
@@ -648,9 +595,11 @@ func (a *App) hasDelivery(id, delivery string) (bool, error) {
 		return false, err
 	}
 	for _, ev := range events {
-		if ev.Type == "user/message" {
-			var m core.Message
-			if json.Unmarshal(ev.Data, &m) == nil && m.DeliveryID == delivery {
+		if messages, recognized, err := core.UserInputMessages(ev); recognized {
+			if err != nil {
+				return false, err
+			}
+			if messages[0].DeliveryID == delivery {
 				return true, nil
 			}
 		}
@@ -664,30 +613,70 @@ func (a *App) recoverScheduled(ctx context.Context) error {
 		return err
 	}
 	for _, session := range sessions {
+		depth, err := a.subagentDepth(session.ID)
+		if err != nil {
+			return err
+		}
+		if depth > 0 {
+			continue
+		}
 		events, err := a.store.Events(session.ID)
 		if err != nil {
 			return err
 		}
 		latestTurn := ""
 		finished := map[string]bool{}
-		var lastUser core.Message
+		scheduleInTurn := false
+		pendingSchedule := map[string]bool{}
+		admittedInbox := map[string]bool{}
 		for _, ev := range events {
+			if ev.Type == "user/inbox" {
+				var entry struct {
+					ID      string       `json:"id"`
+					Message core.Message `json:"message"`
+				}
+				if err := json.Unmarshal(ev.Data, &entry); err != nil {
+					return err
+				}
+				if isScheduleMessage(entry.Message) {
+					pendingSchedule[entry.ID] = true
+				}
+			}
 			if ev.Type == "turn/started" {
 				latestTurn = ev.TurnID
+				scheduleInTurn = false
 			}
 			if ev.Type == "turn/finished" {
 				finished[ev.TurnID] = true
 			}
-			if ev.Type == "user/message" {
-				_ = json.Unmarshal(ev.Data, &lastUser)
+			if messages, recognized, decodeErr := core.UserInputMessages(ev); recognized {
+				if decodeErr != nil {
+					return decodeErr
+				}
+				if ev.TurnID == latestTurn && isScheduleMessage(messages[0]) {
+					scheduleInTurn = true
+				}
+				admittedInbox[messages[0].DeliveryID] = true
 			}
 		}
-		if latestTurn != "" && !finished[latestTurn] && lastUser.DeliveryID != "" {
+		pending := false
+		for id := range pendingSchedule {
+			if !admittedInbox["inbox:"+id] {
+				pending = true
+			}
+		}
+		if pending || latestTurn != "" && !finished[latestTurn] && scheduleInTurn {
 			id := session.ID
 			a.background.Add(1)
 			go func() {
 				defer a.background.Done()
-				if err := a.engine.Continue(ctx, id); err != nil && !errors.Is(err, context.Canceled) {
+				var err error
+				if pending {
+					err = a.engine.ContinueInbox(ctx, id)
+				} else {
+					err = a.engine.Continue(ctx, id)
+				}
+				if err != nil && !errors.Is(err, context.Canceled) {
 					a.line("Scheduled session %s recovery stopped: %s\n", id, clean(err.Error()))
 				}
 			}()
@@ -714,7 +703,7 @@ Model and behavior
   /permission [MODE]      File access: read-only, workspace-write, full-access
   /preset [NAME]          Show or set: standard, ptc, minimal or cordis
   /mode [MODE]            Code execution: native, ptc or ptc-repl
-  /plan [on|off]          Plan mode: no changes until you approve
+  /plan [off|MESSAGE]     Select plan guidance; review with exit_plan_mode
 
 Context and tasks
   /compact                Summarize history to free context space
@@ -735,7 +724,7 @@ Files and workspace
 
 Background work
   /jobs [JSON]            List background jobs, or act on one (JSON)
-  /terminal [JSON]        List terminals, or start/read/write/stop one
+  /terminal [ACTION]      User terminal panel; list, new, attach, rename, close
   /agents                 List subagents and their status
   /workflows [RUN_ID]     Show workflow runs (cancel RUN_ID stops one)
   /schedules              List saved reminders

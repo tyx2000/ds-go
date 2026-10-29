@@ -170,7 +170,7 @@ func TestProviderResponsesReasoningReplayAndCompletionOnlyContent(t *testing.T) 
 		t.Fatalf("bad stream %s %s %#v", text.String(), thought.String(), response)
 	}
 	r := providerRequest()
-	r.Messages = append(r.Messages, core.Message{Role: "assistant", Content: response.Content, ReplayModel: r.Model, ReplayProvider: r.Provider}, core.TextMessage("user", "next"))
+	r.Messages = append(r.Messages, core.Message{Role: "assistant", Content: response.Content, ReplayModel: r.Model, ReplayProvider: r.Provider, ReplayIdentity: response.ReplayIdentity}, core.TextMessage("user", "next"))
 	payload, err := client.payload(r)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +215,7 @@ func TestProviderAnthropicThinkingAndRedactedReplay(t *testing.T) {
 	if response.Content[0].Signature != "signed" || response.Content[1].Data != "opaque-redacted" {
 		t.Fatal("opaque blocks lost")
 	}
-	r.Messages = append(r.Messages, core.Message{Role: "assistant", Content: response.Content, ReplayModel: r.Model, ReplayProvider: r.Provider}, core.TextMessage("user", "next"))
+	r.Messages = append(r.Messages, core.Message{Role: "assistant", Content: response.Content, ReplayModel: r.Model, ReplayProvider: r.Provider, ReplayIdentity: response.ReplayIdentity}, core.TextMessage("user", "next"))
 	payload, err := client.payload(r)
 	if err != nil {
 		t.Fatal(err)

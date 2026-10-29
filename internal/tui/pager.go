@@ -28,6 +28,8 @@ type pager struct {
 	key                            []byte
 	status                         string
 	width, height                  int
+	revealed                       map[string]bool
+	secretSelected                 int
 }
 
 // Page takes terminal ownership only for its bounded foreground interaction.
@@ -135,7 +137,7 @@ func (p *pager) draw() error {
 		title = "Trajectory · turn outline"
 	case p.detail && len(rows) > 0:
 		r := rows[min(p.selected, len(rows)-1)]
-		body = Wrap(Inspector(r, p.tab), width)
+		body = Wrap(inspectRecord(r, p.tab, p.revealed), width)
 		title = fmt.Sprintf("Inspect · %s · %s · %s", r.Kind, r.Name, p.tab)
 	default:
 		for i, r := range rows {
@@ -179,6 +181,9 @@ func (p *pager) draw() error {
 	help := "j/k ↑↓ · PgUp/PgDn · Enter inspect · [/] turn · s stats · u outline · / search · q back"
 	if p.detail {
 		help = "j/k scroll · Tab view · i input · o output · r raw · c code · t timing · Enter back · q return"
+		if len(rows) > 0 && len(userRecordSecrets(rows[min(p.selected, len(rows)-1)])) > 0 {
+			help = "v show/hide secret · V next secret · " + help
+		}
 	}
 	if p.searching {
 		help = "Search: " + p.search
@@ -294,6 +299,27 @@ func (p *pager) handle(key string) bool {
 		p.find(1)
 	case "N":
 		p.find(-1)
+	case "v", "V":
+		if p.detail && len(rows) > 0 {
+			secrets := userRecordSecrets(rows[min(p.selected, len(rows)-1)])
+			if len(secrets) > 0 {
+				p.secretSelected %= len(secrets)
+				if key == "V" {
+					p.secretSelected = (p.secretSelected + 1) % len(secrets)
+				} else {
+					if p.revealed == nil {
+						p.revealed = map[string]bool{}
+					}
+					id := secrets[p.secretSelected].key
+					p.revealed[id] = !p.revealed[id]
+				}
+				state := "hidden"
+				if p.revealed[secrets[p.secretSelected].key] {
+					state = "shown"
+				}
+				p.status = fmt.Sprintf("Secret %d/%d %s · v show/hide · V next", p.secretSelected+1, len(secrets), state)
+			}
+		}
 	case "tab":
 		if p.detail {
 			tabs := []string{"summary", "input", "output", "timing", "raw", "code"}

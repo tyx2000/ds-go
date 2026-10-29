@@ -22,7 +22,7 @@ func TestMCPServerHelper(t *testing.T) {
 		return
 	}
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 4096), maxFrameBytes)
+	scanner.Buffer(make([]byte, 4096), stdioReadBufferBytes)
 	enc := json.NewEncoder(os.Stdout)
 	initialized := false
 	cancelled := false
@@ -33,8 +33,11 @@ func TestMCPServerHelper(t *testing.T) {
 		}
 		var result any
 		switch req.Method {
+		case "server/discover":
+			_ = enc.Encode(wire{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32601, Message: "legacy server"}})
+			continue
 		case "initialize":
-			result = map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}, "resources": map[string]bool{}}, "serverInfo": map[string]string{"name": "test", "version": "1"}, "instructions": "Literal {instructions}"}
+			result = map[string]any{"protocolVersion": LegacyProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}, "resources": map[string]bool{}}, "serverInfo": map[string]string{"name": "test", "version": "1"}, "instructions": "Literal {instructions}"}
 		case "notifications/initialized":
 			initialized = true
 			continue
@@ -180,6 +183,10 @@ func TestHTTPJSONSSEAndSessionHeaders(t *testing.T) {
 	initialized := false
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(405)
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer configured" {
 			t.Error("configured header missing")
 		}
@@ -199,10 +206,13 @@ func TestHTTPJSONSSEAndSessionHeaders(t *testing.T) {
 			w.WriteHeader(400)
 			return
 		}
+		if legacyProbeReply(w, req) {
+			return
+		}
 		if req.Method == "initialize" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Mcp-Session-Id", "session-1")
-			b, _ := json.Marshal(map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}}})
+			b, _ := json.Marshal(map[string]any{"protocolVersion": LegacyProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}}, "serverInfo": map[string]string{"name": "fixture", "version": "1"}})
 			_ = json.NewEncoder(w).Encode(wire{JSONRPC: "2.0", ID: req.ID, Result: b})
 			return
 		}
@@ -260,7 +270,7 @@ func TestHTTPJSONSSEAndSessionHeaders(t *testing.T) {
 	}
 }
 
-func TestMalformedFramesAndCursorLoopsFail(t *testing.T) {
+func TestMalformedFramesAndRepeatedPageTerminates(t *testing.T) {
 	c := &Client{pending: map[string]chan response{}, notifications: make(chan Notification, 1)}
 	for _, frame := range []string{`{oops}`, `{"jsonrpc":"1.0","id":1,"result":{}}`, `{"jsonrpc":"2.0","id":1}`, `[]`} {
 		if err := c.handle([]byte(frame), func(wire) error { return nil }); err == nil {
@@ -268,8 +278,15 @@ func TestMalformedFramesAndCursorLoopsFail(t *testing.T) {
 		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(405)
+			return
+		}
 		var req wire
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if legacyProbeReply(w, req) {
+			return
+		}
 		if req.Method == "notifications/initialized" {
 			w.WriteHeader(202)
 			return
@@ -277,7 +294,7 @@ func TestMalformedFramesAndCursorLoopsFail(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		var result any
 		if req.Method == "initialize" {
-			result = map[string]any{"protocolVersion": ProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}}}
+			result = map[string]any{"protocolVersion": LegacyProtocolVersion, "capabilities": map[string]any{"tools": map[string]bool{}}, "serverInfo": map[string]string{"name": "fixture", "version": "1"}}
 		} else {
 			result = map[string]any{"tools": []any{}, "nextCursor": "repeat"}
 		}
@@ -290,8 +307,8 @@ func TestMalformedFramesAndCursorLoopsFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.ListTools(context.Background()); err == nil || !strings.Contains(err.Error(), "repeated") {
-		t.Fatalf("cursor loop: %v", err)
+	if tools, err := client.ListTools(context.Background()); err != nil || len(tools) != 0 {
+		t.Fatalf("identical repeated page did not terminate: %v %v", tools, err)
 	}
 }
 

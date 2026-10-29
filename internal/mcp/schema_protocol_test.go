@@ -14,11 +14,15 @@ import (
 )
 
 func TestProtocolNegotiationAndAdvertisedOutputValidation(t *testing.T) {
-	for _, version := range []string{ProtocolVersion, "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"} {
+	for _, version := range []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"} {
 		t.Run(version, func(t *testing.T) {
 			var calls atomic.Int32
 			var deleted atomic.Bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					w.WriteHeader(405)
+					return
+				}
 				if r.Method == "DELETE" {
 					if got := r.Header.Get("MCP-Protocol-Version"); got != version {
 						t.Errorf("DELETE protocol %q, want %q", got, version)
@@ -37,10 +41,13 @@ func TestProtocolNegotiationAndAdvertisedOutputValidation(t *testing.T) {
 					w.WriteHeader(202)
 					return
 				}
+				if legacyProbeReply(w, request) {
+					return
+				}
 				var result any
 				switch request.Method {
 				case "initialize":
-					if got := r.Header.Get("MCP-Protocol-Version"); got != ProtocolVersion {
+					if got := r.Header.Get("MCP-Protocol-Version"); got != "" {
 						t.Errorf("initial header %q", got)
 					}
 					w.Header().Set("Mcp-Session-Id", "negotiated")
