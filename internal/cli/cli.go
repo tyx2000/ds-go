@@ -329,7 +329,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return a.fail(err)
 	}
 	models = a.attachmentStore.Resolve(models)
-	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, ExecutionMode: a.cfg.ExecutionMode, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext})
+	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, ExecutionMode: a.cfg.ExecutionMode, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext, ContextFor: a.contextRoute})
 	a.engine.Notify = a.notice
 	a.engine.UpdateOptions(func(o *agent.Options) {
 		o.PrepareInput = a.prepareInput

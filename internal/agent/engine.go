@@ -287,6 +287,7 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			return x
 		}
 	}
+	overflowRetries := 0
 	for step := 0; step < opts.MaxSteps; step++ {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -310,16 +311,6 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		messages, x := e.Store.Messages(id)
 		if x != nil {
 			return x
-		}
-		// Estimate conservatively by bytes. The model supplies authoritative usage.
-		if len(core.JSON(messages))/3 > opts.ContextTokens && len(messages) > 6 {
-			if err = e.compact(ctx, id, turn, messages); err != nil {
-				return err
-			}
-			messages, err = e.Store.Messages(id)
-			if err != nil {
-				return err
-			}
 		}
 		model, thinking := opts.Model, opts.Thinking
 		if session.Model != "" {
@@ -373,14 +364,18 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		if provider == "" {
 			provider = opts.Provider
 		}
+		var contextMessages []core.Message
 		if opts.RequestContext != nil {
-			contextMessages, x := opts.RequestContext(ctx, session)
+			contextMessages, x = opts.RequestContext(ctx, session)
 			if x != nil {
 				return x
 			}
 			messages = append(messages, contextMessages...)
 		}
 		req := core.Request{Provider: provider, Model: model, Thinking: thinking, System: system, Messages: messages, Tools: specs, MaxTokens: opts.MaxTokens, SessionID: id, Purpose: "agent"}
+		if req, err = e.relieveContextPressure(ctx, id, turn, req, contextMessages); err != nil {
+			return err
+		}
 		if opts.BeforeModel != nil {
 			if err = opts.BeforeModel(ctx, session, turn, req); err != nil {
 				return err
@@ -388,6 +383,15 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		}
 		if err = appendEvent("step/started", map[string]any{"step": step + 1, "model": model}); err != nil {
 			return err
+		}
+		// The request anchor lets the token meter reuse this step's reported
+		// usage for an identical later envelope.
+		if nodes, _, surfaceErr := e.contextSurface(id); surfaceErr == nil {
+			if record, recordErr := contextRequestParts(req, nodes); recordErr == nil {
+				if err = appendEvent("context/request", record); err != nil {
+					return err
+				}
+			}
 		}
 		requestStarted := time.Now()
 		var timingMu sync.Mutex
@@ -414,8 +418,19 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			if logErr := appendEvent("assistant/attempt", map[string]any{"response": response, "error": x.Error()}); logErr != nil {
 				return errors.Join(x, logErr)
 			}
+			// A confirmed overflow condenses as much as safely possible and
+			// retries the step, at most maxOverflowRetries times per turn.
+			if isContextOverflow(x) && overflowRetries < maxOverflowRetries && ctx.Err() == nil {
+				overflowRetries++
+				if recovered, recoverErr := e.recoverOverflow(ctx, id, turn); recoverErr != nil {
+					return errors.Join(x, recoverErr)
+				} else if recovered {
+					continue
+				}
+			}
 			return x
 		}
+		overflowRetries = 0
 		if len(response.Content) == 0 {
 			return errors.New("model returned an empty response")
 		}
@@ -579,7 +594,6 @@ func (e *Engine) Compact(ctx context.Context, id string) error {
 }
 
 func (e *Engine) compact(ctx context.Context, id, turn string, messages []core.Message) error {
-	opts := e.options()
 	if len(messages) < 2 {
 		return errors.New("not enough history to compact")
 	}
@@ -607,6 +621,12 @@ func (e *Engine) compact(ctx context.Context, id, turn string, messages []core.M
 	if cut < 1 {
 		return errors.New("no complete history prefix available for compaction")
 	}
+	return e.compactAt(ctx, id, turn, messages, cut)
+}
+
+// compactAt replaces messages[:cut] with one summary and keeps the rest verbatim.
+func (e *Engine) compactAt(ctx context.Context, id, turn string, messages []core.Message, cut int) error {
+	opts := e.options()
 	prefix := messages[:cut]
 	prompt := "Summarize this coding session for continuation. Preserve user requirements, paths, edits, decisions, tool outcomes, unresolved errors, and next actions. Do not invent progress. Return only the summary.\n\n" + string(core.JSON(compactionHistory(prefix)))
 	session, err := e.Store.Get(id)
