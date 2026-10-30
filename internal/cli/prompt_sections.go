@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	instructions "dsgo/internal/context"
 	"dsgo/internal/core"
 	"dsgo/internal/webtools"
 	"dsgo/internal/workflow"
@@ -22,7 +23,7 @@ type promptSection struct {
 	text  string
 }
 
-func (a *App) presetSystemPrompt(s core.Session) string {
+func (a *App) presetSystemPrompt(s core.Session, skills []instructions.Skill) string {
 	if sessionPreset(s) == "minimal" {
 		return "You are a helpful software engineer assistant."
 	}
@@ -39,6 +40,16 @@ func (a *App) presetSystemPrompt(s core.Session) string {
 		{"tool:subagent", 2800, subagentGuidance},
 		{"mcp:servers", 3100, a.mcpSystemInstructions()},
 		{"tools:sdk", 5000, a.ptcInstructions(s)},
+	}
+	// Keep the existing filesystem skill catalog available until the dedicated
+	// skill-context producer is ported. Its instruction bodies remain load-on-demand.
+	if len(skills) > 0 {
+		var catalog strings.Builder
+		catalog.WriteString("Available filesystem skills (load_skill reads their instructions):\n")
+		for _, skill := range skills {
+			fmt.Fprintf(&catalog, "- %s: %s [%s]\n", skill.Name, skill.Description, skill.Path)
+		}
+		sections = append(sections, promptSection{"context:skills", 3000, catalog.String()})
 	}
 	if a.planGuidanceFor(s.ID) {
 		sections = append(sections, promptSection{"plan:policy", 500, officialPlanPolicy})

@@ -46,6 +46,7 @@ type Options struct {
 	BeforeStep          func(context.Context, core.Session, string, int) error
 	BeforeTurn          func(context.Context, core.Session, string) error
 	AfterTurn           func(context.Context, core.Session, string) error
+	AfterCompaction     func(context.Context, core.Session, string) error
 	RenderToolResult    func(context.Context, core.ToolContext, string, core.ToolResult) (core.ToolResult, error)
 	Approve             core.Approver
 }
@@ -308,6 +309,15 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return err
 			}
 		}
+		stepStarted := false
+	retryRequest:
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		session, err = e.Store.Get(id)
+		if err != nil {
+			return err
+		}
 		messages, x := e.Store.Messages(id)
 		if x != nil {
 			return x
@@ -381,8 +391,11 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return err
 			}
 		}
-		if err = appendEvent("step/started", map[string]any{"step": step + 1, "model": model}); err != nil {
-			return err
+		if !stepStarted {
+			if err = appendEvent("step/started", map[string]any{"step": step + 1, "model": model}); err != nil {
+				return err
+			}
+			stepStarted = true
 		}
 		// The request anchor lets the token meter reuse this step's reported
 		// usage for an identical later envelope.
@@ -422,10 +435,21 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			// retries the step, at most maxOverflowRetries times per turn.
 			if isContextOverflow(x) && overflowRetries < maxOverflowRetries && ctx.Err() == nil {
 				overflowRetries++
-				if recovered, recoverErr := e.recoverOverflow(ctx, id, turn); recoverErr != nil {
+				recovered, recoverErr := e.recoverOverflow(ctx, id, turn, req)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if requiredCompactionFailure(recoverErr) {
 					return errors.Join(x, recoverErr)
-				} else if recovered {
-					continue
+				}
+				if recovered {
+					if recoverErr != nil {
+						e.compactionWarning(id, "context-overflow", "Context recovery made durable progress; retrying the same step.", recoverErr)
+					}
+					goto retryRequest
+				}
+				if recoverErr != nil {
+					return errors.Join(x, recoverErr)
 				}
 			}
 			return x
@@ -622,45 +646,6 @@ func (e *Engine) compact(ctx context.Context, id, turn string, messages []core.M
 		return errors.New("no complete history prefix available for compaction")
 	}
 	return e.compactAt(ctx, id, turn, messages, cut)
-}
-
-// compactAt replaces messages[:cut] with one summary and keeps the rest verbatim.
-func (e *Engine) compactAt(ctx context.Context, id, turn string, messages []core.Message, cut int) error {
-	opts := e.options()
-	prefix := messages[:cut]
-	prompt := "Summarize this coding session for continuation. Preserve user requirements, paths, edits, decisions, tool outcomes, unresolved errors, and next actions. Do not invent progress. Return only the summary.\n\n" + string(core.JSON(compactionHistory(prefix)))
-	session, err := e.Store.Get(id)
-	if err != nil {
-		return err
-	}
-	model := session.Model
-	if model == "" {
-		model = opts.Model
-	}
-	provider := session.Provider
-	if provider == "" {
-		provider = opts.Provider
-	}
-	response, err := e.Model.Stream(ctx, core.Request{Provider: provider, Model: model, Thinking: "off", MaxTokens: 8192, Messages: []core.Message{core.TextMessage("user", prompt)}, SessionID: id, Purpose: "compaction"}, nil)
-	if err != nil {
-		return fmt.Errorf("context compaction: %w", err)
-	}
-	var parts []string
-	for _, b := range response.Content {
-		if b.Type == "text" {
-			parts = append(parts, b.Text)
-		}
-	}
-	if len(parts) == 0 {
-		return errors.New("context compaction returned no summary")
-	}
-	newMessages := []core.Message{core.TextMessage("user", "Previous session context (summary):\n"+strings.Join(parts, "\n")), core.TextMessage("assistant", "I will continue using this summary and the following recent history.")}
-	newMessages = append(newMessages, messages[cut:]...)
-	ev, err := e.Store.Append(id, turn, "context/compacted", map[string]any{"messages": newMessages, "at": time.Now().UTC(), "source_messages": cut, "retained_input_start": 2})
-	if err == nil {
-		e.emit(id, "event", ev)
-	}
-	return err
 }
 
 func Decode(raw json.RawMessage, v any) error {

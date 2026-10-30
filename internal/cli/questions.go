@@ -80,11 +80,14 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 				a.line("     %s\n", clean(option.Description))
 			}
 		}
+		if len(q.Options) > 0 {
+			a.line("  %d. Other (enter your own answer)\n", len(q.Options)+1)
+		}
 		prompt := "Answer: "
 		if len(q.Options) > 0 {
-			prompt = "Choose a number or type your answer: "
+			prompt = "Choose a number, Other, or type your answer: "
 			if q.MultiSelect {
-				prompt = "Choose numbers separated by commas, or type your answer: "
+				prompt = "Choose numbers separated by commas (include Other to add text), or type your answer: "
 			}
 		}
 		for {
@@ -96,10 +99,22 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			answer, err := parseQuestionAnswer(q, text)
+			answer, other, err := parseQuestionChoice(q, text)
 			if err != nil {
 				a.line("%s\n", err)
 				continue
+			}
+			if other {
+				const customPrompt = "Other answer: "
+				a.line("%s", customPrompt)
+				custom, err := a.readPrivateLine(ctx, customPrompt)
+				if err != nil {
+					return result, err
+				}
+				if err := ctx.Err(); err != nil {
+					return result, err
+				}
+				answer.Custom = &custom
 			}
 			result.Answers = append(result.Answers, answer)
 			break
@@ -114,44 +129,65 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 }
 
 func parseQuestionAnswer(q userQuestion, text string) (userAnswer, error) {
+	answer, other, err := parseQuestionChoice(q, text)
+	if err == nil && other {
+		err = errors.New("the Other choice requires a separate answer")
+	}
+	return answer, err
+}
+
+// Other is an explicit additional choice. Its text is read separately so every
+// string, including a number or an option label, remains a possible custom answer.
+func parseQuestionChoice(q userQuestion, text string) (userAnswer, bool, error) {
 	answer := userAnswer{ID: q.ID, Selected: []string{}}
 	trimmed := strings.TrimFunc(text, jsWhitespace)
 	if len(q.Options) == 0 {
 		answer.Custom = &text
-		return answer, nil
+		return answer, false, nil
 	}
 	if trimmed == "" {
-		return answer, errors.New("select an option or enter an answer")
+		return answer, false, errors.New("select an option or enter an answer")
 	}
 	for _, option := range q.Options {
 		if trimmed == option.Label {
 			answer.Selected = append(answer.Selected, option.Label)
-			return answer, nil
+			return answer, false, nil
 		}
+	}
+	if strings.EqualFold(trimmed, "other") {
+		return answer, true, nil
 	}
 	parts := strings.Split(trimmed, ",")
 	indexes := []int{}
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		index, err := strconv.Atoi(part)
+		if strings.EqualFold(part, "other") {
+			index, err = len(q.Options)+1, nil
+		}
 		if err != nil {
 			answer.Custom = &text
-			return answer, nil
+			return answer, false, nil
 		}
-		if index < 1 || index > len(q.Options) {
-			return answer, fmt.Errorf("choose a number from 1 to %d", len(q.Options))
+		if index < 1 || index > len(q.Options)+1 {
+			return answer, false, fmt.Errorf("choose a number from 1 to %d", len(q.Options)+1)
 		}
 		indexes = append(indexes, index-1)
 	}
 	if !q.MultiSelect && len(indexes) > 1 {
-		return answer, errors.New("this question accepts one option")
+		return answer, false, errors.New("this question accepts one option")
 	}
 	seen := map[int]bool{}
+	other := false
 	for _, index := range indexes {
 		if !seen[index] {
-			answer.Selected = append(answer.Selected, q.Options[index].Label)
+			if index == len(q.Options) {
+				other = true
+			} else {
+				answer.Selected = append(answer.Selected, q.Options[index].Label)
+			}
 			seen[index] = true
 		}
 	}
-	return answer, nil
+	return answer, other, nil
 }

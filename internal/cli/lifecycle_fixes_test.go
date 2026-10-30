@@ -73,12 +73,14 @@ func TestSCOR005BusyParentQueuesCompleteUserInputOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-entered
-	a.attachments = []core.Block{{Type: "image", Source: map[string]any{"fixture": "durable-image"}}}
+	if err := a.addDraftAttachment(parent.ID, core.Block{Type: "image", Source: map[string]any{"fixture": "durable-image"}}, 1); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.turn("typed while automatic turn runs"); err != nil {
 		close(release)
 		t.Fatal(err)
 	}
-	if len(a.attachments) != 0 {
+	if a.hasDraftAttachments(parent.ID) {
 		close(release)
 		t.Fatal("durably queued attachment was not consumed")
 	}
@@ -123,12 +125,14 @@ func TestSCOR005RejectedAdmissionPreservesPendingAttachment(t *testing.T) {
 		return core.Response{}, nil
 	}))
 	a.session = parent
-	a.attachments = []core.Block{{Type: "image", Source: map[string]any{"fixture": "keep"}}}
+	if err := a.addDraftAttachment(parent.ID, core.Block{Type: "image", Source: map[string]any{"fixture": "keep"}}, 1); err != nil {
+		t.Fatal(err)
+	}
 	a.cancel()
 	if err := a.turn("not admitted"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v", err)
 	}
-	if len(a.attachments) != 1 {
+	if len(a.draftAttachments(parent.ID)) != 1 {
 		t.Fatal("unadmitted attachment was discarded")
 	}
 }

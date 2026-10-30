@@ -18,7 +18,6 @@ import (
 	"dsgo/internal/schedule"
 	"dsgo/internal/tools"
 	"dsgo/internal/webtools"
-	"dsgo/internal/workflow"
 )
 
 type child struct {
@@ -626,15 +625,7 @@ func (a *App) systemFor(s core.Session) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	text, err := instructions.System(s.CWD, skills)
-	if err != nil {
-		return "", err
-	}
-	if a.planFor(s.ID) {
-		text += "\nPlan mode is active. Investigate and propose a plan; the user must explicitly approve via /plan off before state changes.\n"
-	}
-	text = strings.Replace(text, "You are a coding agent powered by the selected DeepSeek model.", "You are a coding agent powered by the "+s.Model+" model.", 1)
-	return text + a.mcpSystemInstructions() + a.referenceSystemInstructions(s) + a.ptcInstructions(s) + webtools.Guidance() + workflow.Guidance + subagentGuidance + a.goalGuidance(), nil
+	return a.presetSystemPrompt(s, skills), nil
 }
 func (a *App) loadSkill(name string) (string, error) { return instructions.LoadSkill(a.skills, name) }
 

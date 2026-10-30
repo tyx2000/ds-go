@@ -330,14 +330,14 @@ func (c *Client) responseError(response *http.Response) error {
 		code = "QUOTA"
 	case response.StatusCode == 429:
 		code = "RATE_LIMIT"
-	case strings.Contains(detail, "context") && (strings.Contains(detail, "exceed") || strings.Contains(detail, "length")):
+	case core.IsContextWindowExceeded(detail):
 		code = "CONTEXT_WINDOW_EXCEEDED"
 	case response.StatusCode >= 500:
 		code = "SERVER"
 	case response.StatusCode == 400 || response.StatusCode == 413:
 		code = "INVALID_REQUEST"
 	}
-	if response.StatusCode == 400 && strings.Contains(detail, "file") && (strings.Contains(detail, "not found") || strings.Contains(detail, "expired") || strings.Contains(detail, "invalid file")) {
+	if code == "INVALID_REQUEST" && response.StatusCode == 400 && strings.Contains(detail, "file") && (strings.Contains(detail, "not found") || strings.Contains(detail, "expired") || strings.Contains(detail, "invalid file")) {
 		code = "STALE_FILE"
 	}
 	failure := &Error{Code: code, Status: response.StatusCode}

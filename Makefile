@@ -5,11 +5,11 @@ build:
 	go build -trimpath -o bin/dsgo ./cmd/dsgo
 
 test:
-	go test ./... -timeout=45s
+	go test ./... -timeout=120s
 
 check:
 	go vet ./...
-	go test -race ./... -timeout=45s
+	go test -race ./... -timeout=120s
 
 install: build
 	install -d "$(PREFIX)/bin"

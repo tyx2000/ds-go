@@ -111,13 +111,15 @@ func (a *App) completionFor(id string) tui.CompletionProvider {
 				}
 			}
 		}
-		if candidates, err := a.sessionReferences().Candidates(ctx, id, token.Query, 0); err == nil {
-			for _, candidate := range candidates {
-				detail := "session"
-				if !candidate.SameWorkspace && candidate.CWD != "" {
-					detail += " · " + candidate.CWD
+		if !token.Quoted {
+			if candidates, err := a.sessionReferences().Candidates(ctx, id, token.Query, 0); err == nil {
+				for _, candidate := range candidates {
+					detail := "session"
+					if !candidate.SameWorkspace && candidate.CWD != "" {
+						detail += " · " + candidate.CWD
+					}
+					result.Candidates = append(result.Candidates, tui.Completion{Value: candidate.Mention, Label: candidate.DisplayTitle, Detail: detail})
 				}
-				result.Candidates = append(result.Candidates, tui.Completion{Value: candidate.Mention, Label: candidate.DisplayTitle, Detail: detail})
 			}
 		}
 		return result

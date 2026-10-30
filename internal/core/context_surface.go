@@ -118,6 +118,26 @@ func ContextSurface(events []Event) ([]ContextNode, error) {
 			if payload.Start != nil && (*payload.Start < 0 || *payload.Start >= len(payload.Messages)) {
 				return nil, errors.New("invalid retained input boundary")
 			}
+			// Legacy compaction rewrote origins for the full surface. Keep
+			// those origins for subsequent durable CAS records, but recover
+			// real input groups from an unchanged retained tail when possible.
+			var retained []ContextNode
+			if payload.Start != nil {
+				tail := payload.Messages[*payload.Start:]
+				if len(tail) <= len(nodes) {
+					candidate := nodes[len(nodes)-len(tail):]
+					equal := true
+					for i, node := range candidate {
+						if !bytes.Equal(JSON(node.Message), JSON(tail[i])) {
+							equal = false
+							break
+						}
+					}
+					if equal {
+						retained = append([]ContextNode{}, candidate...)
+					}
+				}
+			}
 			nodes = make([]ContextNode, 0, len(payload.Messages))
 			group := int64(0)
 			for part, message := range payload.Messages {
@@ -131,8 +151,8 @@ func ContextSurface(events []Event) ([]ContextNode, error) {
 				if directContextInput(message) || capturedContextInput(message) {
 					messageGroup = group
 				}
-				if payload.Start != nil && part >= *payload.Start {
-					messageGroup = -int64(*payload.Start + 1)
+				if payload.Start != nil && part >= *payload.Start && retained != nil {
+					messageGroup = retained[part-*payload.Start].InputGroup
 				}
 				nodes = append(nodes, ContextNode{ContextOrigin{event.Seq, part}, messageGroup, message})
 			}

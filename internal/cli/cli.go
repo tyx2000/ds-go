@@ -78,8 +78,9 @@ type App struct {
 	timeContext      timeContextRuntime
 	instructionState instructionBaselines
 	current          atomic.Value
-	attachments      []core.Block
+	drafts           attachmentDrafts
 	attachmentStore  *attachments.Store
+	pricingCatalogs  deepSeekCatalogCache
 	mcpMu            sync.RWMutex
 	mcpReloadMu      sync.Mutex
 	mcpSupervisors   map[string]*mcp.Supervisor
@@ -328,7 +329,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if err != nil {
 		return a.fail(err)
 	}
-	models = a.attachmentStore.Resolve(models)
+	models = a.attachmentStore.ResolveProjected(models, a.projectRequestImage)
 	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, ExecutionMode: a.cfg.ExecutionMode, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext, ContextFor: a.contextRoute})
 	a.engine.Notify = a.notice
 	a.engine.UpdateOptions(func(o *agent.Options) {
@@ -336,6 +337,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		o.CommitPreparedInput = a.commitGoalInput
 		o.BeforeModel = a.beforeModel
 		o.BeforeStep = a.prepareStep
+		o.AfterCompaction = a.ensureInstructionBaseline
 		o.BeforeTurn = a.workspaceTurnStarted
 		o.AfterTurn = a.workspaceTurnFinished
 		o.RenderToolResult = a.spillToolResult
@@ -418,11 +420,19 @@ func (a *App) promptLabel(label string) string {
 
 func (a *App) fail(err error) int { a.errorLine("dsgo: " + clean(err.Error())); return 1 }
 func (a *App) print(v any) {
+	if a.flags.json {
+		a.writeJSON(v)
+		return
+	}
 	b, _ := json.MarshalIndent(v, "", "  ")
 	a.line("%s\n", clean(string(b)))
 }
 func (a *App) line(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
+	if a.flags.json {
+		a.writeJSON(map[string]any{"type": "output", "text": text})
+		return
+	}
 	if a.editor != nil {
 		a.editor.WriteAbove(text)
 		return
@@ -430,6 +440,17 @@ func (a *App) line(format string, args ...any) {
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	_, _ = io.WriteString(a.out, text)
+}
+
+func (a *App) writeJSON(value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		a.errorLine("dsgo: could not encode JSON output: " + err.Error())
+		return
+	}
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	_, _ = a.out.Write(append(data, '\n'))
 }
 func (a *App) errorLine(text string) {
 	if a.editor != nil {
@@ -565,6 +586,23 @@ func (a *App) notice(n agent.Notice) {
 		_ = json.NewEncoder(a.out).Encode(n)
 		return
 	}
+	if n.Type == "warning" {
+		var warning struct{ Phase, Message, Error string }
+		if json.Unmarshal(core.JSON(n.Data), &warning) == nil {
+			text := "Warning"
+			if warning.Phase != "" {
+				text += " [" + clean(warning.Phase) + "]"
+			}
+			if warning.Message != "" {
+				text += ": " + clean(warning.Message)
+			}
+			if warning.Error != "" {
+				text += " " + clean(warning.Error)
+			}
+			a.errorLine(text)
+		}
+		return
+	}
 	if n.SessionID != a.current.Load() {
 		if n.Type == "turn_finished" {
 			a.line("\n[agent %s finished]\n", n.SessionID)
@@ -668,26 +706,28 @@ func (a *App) readLineWithOptions(ctx context.Context, options tui.LineOptions) 
 func (a *App) turn(prompt string) error {
 	stopSignals := a.acquireSignals()
 	defer stopSignals()
+	id := a.session.ID
 	if a.manager != nil {
-		a.manager.resumeWakes(a.session.ID)
+		a.manager.resumeWakes(id)
 	}
 	input := core.TextMessage("user", prompt)
-	input.Content = append(input.Content, a.attachments...)
+	attachments, draftThrough := a.snapshotDraftAttachments(id)
+	input.Content = append(input.Content, attachments...)
 	input.DeliveryID = "input:" + agent.ID()
 	pendingInput := input
 	ctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
 	owner := &foregroundTurn{cancel: cancel}
-	a.foreground.Store(a.session.ID, owner)
-	defer a.foreground.CompareAndDelete(a.session.ID, owner)
+	a.foreground.Store(id, owner)
+	defer a.foreground.CompareAndDelete(id, owner)
 	done := make(chan error, 1)
-	go func() { done <- a.engine.Run(ctx, a.session.ID, input) }()
+	go func() { done <- a.engine.Run(ctx, id, input) }()
 	for {
 		select {
 		case err := <-done:
 			_, goalRound, _ := state.GoalSource(pendingInput)
-			if goalRound && !a.inputAdmitted(a.session.ID, pendingInput.DeliveryID) {
-				a.dropGoalReservation(a.session.ID, pendingInput.DeliveryID)
+			if goalRound && !a.inputAdmitted(id, pendingInput.DeliveryID) {
+				a.dropGoalReservation(id, pendingInput.DeliveryID)
 			}
 			if errors.Is(err, agent.ErrBusy) {
 				if goalRound {
@@ -695,15 +735,15 @@ func (a *App) turn(prompt string) error {
 				}
 				// Another automatic owner may have won the admission race. The
 				// full user input is committed before the composer clears media.
-				if _, queueErr := a.manager.deliver(ctx, a.session.ID, pendingInput, false); queueErr != nil {
+				if _, queueErr := a.manager.deliver(ctx, id, pendingInput, false); queueErr != nil {
 					return queueErr
 				}
-				a.attachments = nil
+				a.retireDraftAttachments(id, draftThrough)
 				a.line("\n[Message queued for the active session]\n")
 				return nil
 			}
-			if a.inputAdmitted(a.session.ID, input.DeliveryID) {
-				a.attachments = nil
+			if a.inputAdmitted(id, input.DeliveryID) {
+				a.retireDraftAttachments(id, draftThrough)
 			}
 			if err != nil {
 				return err
@@ -711,7 +751,7 @@ func (a *App) turn(prompt string) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			continuation, x := a.goalContinuation(ctx, a.session.ID)
+			continuation, x := a.goalContinuation(ctx, id)
 			if x != nil {
 				return x
 			}
@@ -720,7 +760,7 @@ func (a *App) turn(prompt string) error {
 			}
 			a.line("\n[Continuing active goal]\n")
 			pendingInput = *continuation
-			go func() { done <- a.engine.Run(ctx, a.session.ID, *continuation) }()
+			go func() { done <- a.engine.Run(ctx, id, *continuation) }()
 		}
 	}
 }
@@ -741,7 +781,11 @@ func (a *App) inputAdmitted(id, delivery string) bool {
 func (a *App) chat() error {
 	stopSignals := a.acquireSignals()
 	defer stopSignals()
-	a.line("dsgo %s · %s · %s\nWorkspace: %s\nSession: %s\n/help commands · Ctrl+C cancel turn · /quit exit\n", Version, clean(a.session.Model), clean(a.session.Permission), clean(a.session.CWD), a.session.ID)
+	if a.flags.json {
+		a.writeJSON(map[string]any{"type": "session", "session": a.session})
+	} else {
+		a.line("dsgo %s · %s · %s\nWorkspace: %s\nSession: %s\n/help commands · Ctrl+C cancel turn · /quit exit\n", Version, clean(a.session.Model), clean(a.session.Permission), clean(a.session.CWD), a.session.ID)
+	}
 	if a.session.Provider == "deepseek-official" && a.cfg.APIKey == "" && len(a.cfg.Account) == 0 {
 		a.line("Set DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\n")
 	}
@@ -750,7 +794,9 @@ func (a *App) chat() error {
 	}
 	for {
 		a.inputMu.Lock()
-		a.line("\n%s ", a.promptLabel("dsgo>"))
+		if !a.flags.json {
+			a.line("\n%s ", a.promptLabel("dsgo>"))
+		}
 		line, err := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("dsgo>") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
 		a.inputMu.Unlock()
 		eof := errors.Is(err, io.EOF)
@@ -760,7 +806,9 @@ func (a *App) chat() error {
 		line = strings.TrimRight(line, "\r\n")
 		for strings.HasSuffix(line, "\\") && !eof {
 			line = strings.TrimSuffix(line, "\\") + "\n"
-			a.line("%s ", a.promptLabel("..."))
+			if !a.flags.json {
+				a.line("%s ", a.promptLabel("..."))
+			}
 			a.inputMu.Lock()
 			next, x := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("...") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
 			a.inputMu.Unlock()
@@ -800,6 +848,10 @@ func (a *App) showHistory() {
 	messages, err := a.store.Messages(a.session.ID)
 	if err != nil {
 		a.fail(err)
+		return
+	}
+	if a.flags.json {
+		a.writeJSON(map[string]any{"type": "history", "session_id": a.session.ID, "messages": messages})
 		return
 	}
 	for _, m := range messages {

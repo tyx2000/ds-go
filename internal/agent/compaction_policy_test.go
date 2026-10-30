@@ -122,7 +122,7 @@ func TestPressureCompactsOldestHistoryAndKeepsRecentTail(t *testing.T) {
 		t.Fatal("pressure did not condense history")
 	}
 	sent := requests.agent[0].Messages
-	if !strings.Contains(sent[0].Content[0].Text, "SUMMARY") || sent[len(sent)-1].Content[0].Text != "next" {
+	if !strings.Contains(string(core.JSON(sent[0])), "SUMMARY") || sent[len(sent)-1].Content[0].Text != "next" {
 		t.Fatalf("condensed request: first=%q last=%q", sent[0].Content[0].Text, sent[len(sent)-1].Content[0].Text)
 	}
 	if total, _ := e.measuredTokens(context.Background(), session.ID, requests.agent[0]); total >= 3200 {
@@ -190,7 +190,7 @@ func TestOverflowCondensesAndRetriesOnce(t *testing.T) {
 	if err := e.Run(context.Background(), session.ID, core.TextMessage("user", "next")); err != nil {
 		t.Fatalf("recovered overflow failed: %v", err)
 	}
-	if requests.compacts != 1 || len(requests.agent) != 2 || !strings.Contains(requests.agent[1].Messages[0].Content[0].Text, "SUMMARY") {
+	if requests.compacts != 1 || len(requests.agent) != 2 || !strings.Contains(string(core.JSON(requests.agent[1].Messages[0])), "SUMMARY") {
 		t.Fatalf("compactions=%d agent requests=%d", requests.compacts, len(requests.agent))
 	}
 	// A persistent overflow is retried once, then reported.

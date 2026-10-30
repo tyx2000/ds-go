@@ -15,13 +15,27 @@ func TestCompactionNeverInterpolatesOpaqueReplayIntoPrompt(t *testing.T) {
 		{Type: "redacted_thinking", Data: "opaque-redacted"},
 		{Type: "text", Text: "visible answer"},
 	}}
-	for _, message := range []core.Message{core.TextMessage("user", "first"), prior, core.TextMessage("user", "recent")} {
+	for _, message := range []core.Message{core.TextMessage("user", strings.Repeat("first requirements ", 100)), prior, core.TextMessage("user", "recent")} {
 		if _, err := store.Append(session.ID, "turn", message.Role+"/message", message); err != nil {
 			t.Fatal(err)
 		}
 	}
 	model := fakeModel{func(_ context.Context, request core.Request, _ func(core.Delta)) (core.Response, error) {
-		prompt := request.Messages[0].Content[0].Text
+		var text strings.Builder
+		for _, message := range request.Messages {
+			for _, block := range message.Content {
+				if block.Type == "text" {
+					text.WriteString(block.Text)
+				}
+				if block.Signature != "" || block.Type == "redacted_thinking" {
+					t.Fatal("foreign opaque replay reached auxiliary request")
+				}
+			}
+			if message.ReplayIdentity != "" || message.ReplayModel != "" || message.ReplayProvider != "" {
+				t.Fatal("auxiliary request inherited replay authority")
+			}
+		}
+		prompt := text.String()
 		for _, forbidden := range []string{"opaque-", "private-route-tag", "replay_identity", "replay_model", "replay_provider"} {
 			if strings.Contains(prompt, forbidden) {
 				t.Fatalf("compaction prompt contains %q", forbidden)

@@ -1,0 +1,49 @@
+Final source verification, 2026-10-30 Asia/Shanghai
+Base: 069b4f63dfed211bcf97ae8fbc2929d109675dd1 + uncommitted fixes
+Upstream: 687f282e8625c6b8d11ff58211a90524be2e4317
+
+GOCACHE=/private/tmp/dsgo-go-cache GOMODCACHE=/private/tmp/dsgo-go-mod GOPROXY=off
+Command: go test -race ./... -count=1 -timeout=60s
+Exit: 0
+?   	dsgo/cmd/dsgo	[no test files]
+ok  	dsgo/internal/agent	13.077s
+ok  	dsgo/internal/artifacts	1.557s
+ok  	dsgo/internal/attachments	10.086s
+ok  	dsgo/internal/cli	50.235s
+ok  	dsgo/internal/context	1.263s
+ok  	dsgo/internal/core	1.175s
+ok  	dsgo/internal/jsonschema	1.206s
+ok  	dsgo/internal/mcp	25.932s
+ok  	dsgo/internal/model	1.536s
+ok  	dsgo/internal/preview	1.208s
+ok  	dsgo/internal/reference	1.226s
+ok  	dsgo/internal/schedule	6.662s
+ok  	dsgo/internal/state	7.270s
+ok  	dsgo/internal/timezone	1.195s
+ok  	dsgo/internal/tools	6.970s
+ok  	dsgo/internal/tui	3.504s
+ok  	dsgo/internal/webtools	1.177s
+ok  	dsgo/internal/workflow	2.824s
+
+Command: go vet ./...
+Exit: 0
+
+Command: python3 scripts/verify-upstream.py
+Exit: 0; verified 6 pinned upstream inputs
+
+Command: git diff --check
+Exit: 0
+
+Command: go build -trimpath -o bin/dsgo ./cmd/dsgo
+Exit: 0
+Build: Go 1.27.3, darwin/arm64, vcs.revision=069b4f63dfed211bcf97ae8fbc2929d109675dd1, vcs.modified=true
+
+Real built-binary smoke, isolated temporary state/workspace:
+--json chat; /help, /history, /quit: exit 0; 4 valid JSON records; 0.747s
+--json chat; /attach FIFO, /quit: exit 0; regular-file refusal; 0.041s
+No account/model network call
+
+Installed: /Users/adib/.local/bin/dsgo
+PATH resolves to installed path
+Repo and installed SHA256: e70dae3150428bdadc38d7cdf9d3d6193c5223950387ceb9a213d497160d0697
+Version: 0.1.0-dev

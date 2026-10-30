@@ -1,0 +1,73 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"dsgo/internal/core"
+)
+
+func TestReviewNumericCustomAnswer(t *testing.T) {
+	question := userQuestion{ID:"port",Options:[]userQuestionOption{{Label:"80"},{Label:"443"}}}
+	answer,err:=parseQuestionAnswer(question,"8080")
+	if err!=nil || answer.Custom==nil || *answer.Custom!="8080" {t.Fatalf("custom port answer cannot be submitted: %+v err=%v",answer,err)}
+}
+
+func TestReviewJSONChatProtocol(t *testing.T) {
+	var out,errors bytes.Buffer
+	if code:=Main([]string{"--home",t.TempDir(),"--cwd",t.TempDir(),"--json","chat"},strings.NewReader("/quit\n"),&out,&errors);code!=0 {t.Fatalf("exit=%d stderr=%s",code,errors.String())}
+	for _,line:=range strings.Split(out.String(),"\n"){if strings.TrimSpace(line)!="" && !json.Valid([]byte(line)){t.Fatalf("stdout is not NDJSON: %q",line)}}
+}
+
+func TestReviewInstructionBaselineAfterCompaction(t *testing.T) {
+	t.Setenv("DSH_HOME",t.TempDir());t.Setenv("DSH_AGENTS_HOME",t.TempDir())
+	a,s:=lifecycleApp(t,lifecycleModel(func(context.Context,core.Request,func(core.Delta))(core.Response,error){return core.Response{},nil}))
+	if err:=os.Mkdir(filepath.Join(s.CWD,".git"),0700);err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(filepath.Join(s.CWD,"AGENTS.md"),[]byte("REVIEW_RULE_MUST_STAY_VISIBLE\n"),0600);err!=nil{t.Fatal(err)}
+	if err:=a.ensureInstructionBaseline(a.ctx,s,"turn1");err!=nil{t.Fatal(err)}
+	// Model compaction can summarize away this exact rule and its source metadata.
+	_,err:=a.store.Append(s.ID,"turn1","context/compacted",map[string]any{"messages":[]core.Message{core.TextMessage("user","Summary: previous work"),core.TextMessage("assistant","Continue"),core.TextMessage("user","next task")},"retained_input_start":2})
+	if err!=nil{t.Fatal(err)}
+	// A process restart clears the in-memory check, but canonical old events remain.
+	a.instructionState.checked=nil
+	if err:=a.ensureInstructionBaseline(a.ctx,s,"turn2");err!=nil{t.Fatal(err)}
+	for _,message:=range mustReviewMessages(t,a,s.ID){for _,block:=range message.Content{if strings.Contains(block.Text,"REVIEW_RULE_MUST_STAY_VISIBLE"){return}}}
+	t.Fatal("unchanged AGENTS baseline stayed shadowed after compaction and restart")
+}
+
+func mustReviewMessages(t *testing.T,a *App,id string)[]core.Message{t.Helper();messages,err:=a.store.Messages(id);if err!=nil{t.Fatal(err)};return messages}
+
+func TestReviewDraftAttachmentCannotLeakToAnotherSession(t *testing.T){
+	a,s:=lifecycleApp(t,lifecycleModel(func(context.Context,core.Request,func(core.Delta))(core.Response,error){return core.Response{Content:[]core.Block{{Type:"text",Text:"done"}}},nil}))
+	a.session=s
+	path:=filepath.Join(s.CWD,"private-draft.txt")
+	if err:=os.WriteFile(path,[]byte("DRAFT_PRIVATE_TO_SESSION_A"),0600);err!=nil{t.Fatal(err)}
+	if err:=a.attach(path);err!=nil{t.Fatal(err)}
+	other,err:=a.store.Create(t.TempDir(),"session B");if err!=nil{t.Fatal(err)}
+	if err:=a.selectSession(other.ID);err!=nil{t.Fatal(err)}
+	if err:=a.turn("hello from session B");err!=nil{t.Fatal(err)}
+	for _,message:=range mustReviewMessages(t,a,other.ID){for _,block:=range message.Content{if strings.Contains(block.Text,"DRAFT_PRIVATE_TO_SESSION_A"){t.Fatal("session A draft was persisted and sent in session B")}}}
+}
+
+func TestReviewAttachmentUsesCurrentWorkingDirectory(t *testing.T){
+	a,s:=lifecycleApp(t,lifecycleModel(nil));a.session=s
+	child:=filepath.Join(s.CWD,"child");if err:=os.Mkdir(child,0700);err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(filepath.Join(s.CWD,"same.txt"),[]byte("WRONG_ROOT_FILE"),0600);err!=nil{t.Fatal(err)}
+	if err:=os.WriteFile(filepath.Join(child,"same.txt"),[]byte("RIGHT_CHILD_FILE"),0600);err!=nil{t.Fatal(err)}
+	if _,err:=a.workingDirectory(a.ctx,core.ToolContext{SessionID:s.ID},core.JSON(map[string]any{"cd":"child"}));err!=nil{t.Fatal(err)}
+	if err:=a.attach("same.txt");err!=nil{t.Fatal(err)}
+	if len(a.attachments)!=1 || !strings.Contains(a.attachments[0].Text,"RIGHT_CHILD_FILE"){t.Fatal("relative /attach ignored /cwd and read the root's different file")}
+}
+
+func TestReviewQuotedPathDoesNotOfferSessionReferences(t *testing.T){
+	a,s:=lifecycleApp(t,lifecycleModel(nil));a.session=s
+	if _,err:=a.store.Create(s.CWD,"quoted-session");err!=nil{t.Fatal(err)}
+	text:=`@"quoted`
+	result:=a.completionFor(s.ID)(text,len([]rune(text)))
+	for _,candidate:=range result.Candidates{if strings.Contains(candidate.Value,"dsh-session:"){t.Fatal("quoted file query offered a session mention")}}
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,13 +20,19 @@ func (a *App) terminalCommand(arg string) error {
 	if owner == "" {
 		return errors.New("select a Session before opening its terminals")
 	}
-	session := a.session
+	cwd := a.session.CWD
 	if a.store != nil {
-		current, err := a.store.Get(owner)
+		current, err := a.activeWorkingDirectory(owner)
 		if err != nil {
 			return err
 		}
-		session = current
+		cwd = current
+	}
+	resolveCWD := func(ctx context.Context) (string, error) {
+		if a.store == nil {
+			return cwd, nil
+		}
+		return a.ensureWorkingDirectory(ctx, owner)
 	}
 	if a.hostTerminals == nil {
 		controller, err := tools.NewTerminalController(userTerminalOptions(a.cfg.UserTerminal))
@@ -37,7 +44,7 @@ func (a *App) terminalCommand(arg string) error {
 	c := a.hostTerminals
 	output, outputTTY := a.out.(*os.File)
 	interactive := !a.flags.json && outputTTY && tui.IsTerminal(os.Stdin) && tui.IsTerminal(output)
-	panel := tui.TerminalPanelOptions{Input: os.Stdin, Terminal: output, Output: trajectoryWriter{a}, Controller: c, Owner: owner, CWD: session.CWD, Window: a.ctx, PreferredShell: a.preferredTerminalShell, RememberShell: a.rememberTerminalShell}
+	panel := tui.TerminalPanelOptions{Input: os.Stdin, Terminal: output, Output: trajectoryWriter{a}, Controller: c, Owner: owner, CWD: cwd, ResolveCWD: resolveCWD, Window: a.ctx, PreferredShell: a.preferredTerminalShell, RememberShell: a.rememberTerminalShell}
 	arg = strings.TrimSpace(arg)
 	action, rest, _ := strings.Cut(arg, " ")
 	rest = strings.TrimSpace(rest)
@@ -71,10 +78,14 @@ func (a *App) terminalCommand(arg string) error {
 			return err
 		}
 		a.rememberTerminalShell(path)
-		limits := c.Environment(session.CWD)
+		cwd, err := resolveCWD(a.ctx)
+		if err != nil {
+			return err
+		}
+		limits := c.Environment(cwd)
 		cols, rows := min(80, limits.MaxCols), min(24, limits.MaxRows)
 		id := tools.NewHostTerminalID()
-		info, err := c.Create(a.ctx, owner, session.CWD, tools.TerminalCreate{ID: id, ShellPath: path, Cols: cols, Rows: rows})
+		info, err := c.Create(a.ctx, owner, cwd, tools.TerminalCreate{ID: id, ShellPath: path, Cols: cols, Rows: rows})
 		if err != nil {
 			return err
 		}

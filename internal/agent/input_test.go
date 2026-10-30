@@ -178,7 +178,7 @@ func TestPrepareInputCancellationDoesNotCommitInput(t *testing.T) {
 
 func TestCompactionKeepsDirectInputAndSnapshotsTogether(t *testing.T) {
 	store, session := setup(t)
-	for _, message := range []core.Message{core.TextMessage("user", "old direct"), core.TextMessage("assistant", "old answer")} {
+	for _, message := range []core.Message{core.TextMessage("user", strings.Repeat("old direct ", 100)), core.TextMessage("assistant", strings.Repeat("old answer ", 100))} {
 		if _, err := store.Append(session.ID, "old", message.Role+"/message", message); err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func TestCompactionKeepsDirectInputAndSnapshotsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := fakeModel{func(_ context.Context, request core.Request, _ func(core.Delta)) (core.Response, error) {
-		prompt := request.Messages[0].Content[0].Text
+		prompt := string(core.JSON(request.Messages))
 		if strings.Contains(prompt, "latest direct") || strings.Contains(prompt, "latest snapshot") {
 			t.Fatal("compaction split latest batch")
 		}
@@ -201,10 +201,10 @@ func TestCompactionKeepsDirectInputAndSnapshotsTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 4 || messages[2].Content[0].Text != "latest direct" || messages[3].Content[0].Text != "latest snapshot" {
+	if len(messages) != 3 || messages[1].Content[0].Text != "latest direct" || messages[2].Content[0].Text != "latest snapshot" {
 		t.Fatal("latest input batch detached", messages)
 	}
-	if boundary, err := store.CompactionBoundary(session.ID); err != nil || boundary != 2 {
+	if boundary, err := store.CompactionBoundary(session.ID); err != nil || boundary != 1 {
 		t.Fatal("compaction boundary not retained", boundary, err)
 	}
 }

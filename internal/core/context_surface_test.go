@@ -69,3 +69,42 @@ func TestContextReplacementRequiresStrictNativeShape(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyCompactedTailRetainsRealGroupsAndCanPruneToolResult(t *testing.T) {
+	for _, hasHistory := range []bool{true, false} {
+		direct := TextMessage("user", "direct")
+		capture := TextMessage("user", "capture")
+		capture.Source = map[string]any{"kind": "file-reference"}
+		assistant := Message{Role: "assistant", Content: []Block{{Type: "tool_use", ID: "call", Name: "read", Input: JSON(map[string]any{})}}}
+		result := Message{Role: "user", Content: []Block{{Type: "tool_result", ToolUseID: "call", Content: "large result"}}}
+		next := TextMessage("user", "next input")
+		events := []Event{}
+		if hasHistory {
+			events = []Event{{Seq: 1, Type: "user/input", Data: JSON(InputBatch{1, direct, []Message{capture}})}, {Seq: 2, Type: "assistant/message", Data: JSON(assistant)}, {Seq: 3, Type: "tool/result", Data: JSON(result)}, {Seq: 4, Type: "user/message", Data: JSON(next)}}
+		}
+		messages := []Message{TextMessage("user", "legacy summary"), TextMessage("assistant", "legacy ack"), direct, capture, assistant, result, next}
+		events = append(events, Event{Seq: 5, Type: "context/compacted", Data: JSON(map[string]any{"messages": messages, "retained_input_start": 2})})
+		nodes, err := ContextSurface(events)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if nodes[2].InputGroup == 0 || nodes[2].InputGroup != nodes[3].InputGroup || nodes[4].InputGroup != 0 || nodes[5].InputGroup != 0 || nodes[6].InputGroup == nodes[2].InputGroup {
+			t.Fatalf("legacy tail groups conflated: %#v", nodes)
+		}
+		if hasHistory && nodes[2].InputGroup != 1 {
+			t.Fatal("original atomic input membership was lost")
+		}
+		for i, node := range nodes {
+			if node.Origin.Seq != 5 || node.Origin.Part != i {
+				t.Fatal("legacy replay changed persisted CAS origin")
+			}
+		}
+		pruned := result
+		pruned.Content = []Block{{Type: "tool_result", ToolUseID: "call", Content: "small result"}}
+		replacement := ContextReplacement{1, ContextOrigins(nodes), 5, 6, []Message{pruned}}
+		events = append(events, Event{Seq: 6, Type: "context/replace", Data: JSON(replacement)})
+		if _, err = ContextSurface(events); err != nil {
+			t.Fatal("independent retained result cannot be replaced", err)
+		}
+	}
+}

@@ -21,6 +21,7 @@ type TerminalPanelOptions struct {
 	Controller            *tools.TerminalController
 	Owner, CWD, InitialID string
 	Window                context.Context
+	ResolveCWD            func(context.Context) (string, error) // Validate the Session's latest directory only when creating a terminal.
 	PreferredShell        func() string
 	RememberShell         func(string)
 }
@@ -201,7 +202,15 @@ func (p *terminalPanel) create(ctx context.Context, path string) (string, error)
 	}
 	cols, rows := p.grid()
 	id := tools.NewHostTerminalID()
-	if _, err := p.o.Controller.Create(ctx, p.o.Owner, p.o.CWD, tools.TerminalCreate{ID: id, ShellPath: path, Cols: cols, Rows: rows}); err != nil {
+	cwd := p.o.CWD
+	if p.o.ResolveCWD != nil {
+		var err error
+		cwd, err = p.o.ResolveCWD(ctx)
+		if err != nil {
+			return "", err
+		}
+	}
+	if _, err := p.o.Controller.Create(ctx, p.o.Owner, cwd, tools.TerminalCreate{ID: id, ShellPath: path, Cols: cols, Rows: rows}); err != nil {
 		return "", err
 	}
 	window := p.o.Window

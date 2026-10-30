@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"regexp"
 
 	"dsgo/internal/core"
 )
@@ -68,17 +67,35 @@ func (e *Engine) relieveContextPressure(ctx context.Context, id, turn string, re
 		total, err = e.measuredTokens(ctx, id, req)
 		return err
 	}
+	optionalFailure := func(cause error) (core.Request, error) {
+		if ctx.Err() != nil {
+			return req, ctx.Err()
+		}
+		if requiredCompactionFailure(cause) {
+			return req, cause
+		}
+		// Earlier pruning may already have committed. Continue from that
+		// current surface, never from the stale pre-maintenance request.
+		if refreshErr := refresh(); refreshErr != nil {
+			return req, errors.Join(cause, refreshErr)
+		}
+		e.compactionWarning(id, "context-pressure", "Context compaction failed; continuing with the current history.", cause)
+		return req, nil
+	}
 	if pruned, err := e.pruneToolResults(ctx, id, turn); err != nil {
-		return req, err
+		return optionalFailure(err)
 	} else if pruned > 0 {
 		if err = refresh(); err != nil || total < threshold {
 			return req, err
 		}
 	}
 	for attempt := 0; attempt <= compactionRetries; attempt++ {
-		changed, err := e.compactRetaining(ctx, id, turn, retain)
-		if err != nil || !changed {
-			return req, err
+		changed, err := e.compactRetaining(ctx, id, turn, retain, req)
+		if err != nil {
+			return optionalFailure(err)
+		}
+		if !changed {
+			return req, nil
 		}
 		if err = refresh(); err != nil || total < threshold {
 			return req, err
@@ -102,18 +119,42 @@ func (e *Engine) measuredTokens(ctx context.Context, id string, req core.Request
 
 // recoverOverflow condenses as much as safely possible after the provider
 // rejected a request for exceeding its context window.
-func (e *Engine) recoverOverflow(ctx context.Context, id, turn string) (bool, error) {
-	pruned, err := e.pruneToolResults(ctx, id, turn)
+func (e *Engine) recoverOverflow(ctx context.Context, id, turn string, target ...core.Request) (bool, error) {
+	_, before, err := e.contextSurface(id)
 	if err != nil {
 		return false, err
 	}
-	compacted, err := e.compactRetaining(ctx, id, turn, 0)
-	return pruned > 0 || compacted, err
+	_, workErr := e.pruneToolResults(ctx, id, turn)
+	if workErr == nil {
+		_, workErr = e.compactRetaining(ctx, id, turn, 0, target...)
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	_, after, readErr := e.contextSurface(id)
+	if readErr != nil {
+		return false, errors.Join(workErr, readErr)
+	}
+	return contextMutationRevision(after) > contextMutationRevision(before), workErr
+}
+
+func contextMutationRevision(events []core.Event) int {
+	count := 0
+	for _, event := range events {
+		if event.Type == "context/replace" || event.Type == "context/compacted" {
+			count++
+		}
+	}
+	return count
+}
+
+func (e *Engine) compactionWarning(id, phase, message string, err error) {
+	e.emit(id, "warning", map[string]any{"phase": phase, "message": message, "error": err.Error()})
 }
 
 // compactRetaining condenses the oldest history while keeping at least
 // retain estimated tokens of the newest messages verbatim.
-func (e *Engine) compactRetaining(ctx context.Context, id, turn string, retain int) (bool, error) {
+func (e *Engine) compactRetaining(ctx context.Context, id, turn string, retain int, target ...core.Request) (bool, error) {
 	nodes, _, err := e.contextSurface(id)
 	if err != nil {
 		return false, err
@@ -122,7 +163,7 @@ func (e *Engine) compactRetaining(ctx context.Context, id, turn string, retain i
 	if err != nil || cut <= 0 {
 		return false, err
 	}
-	if err = e.compactAt(ctx, id, turn, core.ContextMessages(nodes), cut); err != nil {
+	if err = e.compactAt(ctx, id, turn, core.ContextMessages(nodes), cut, target...); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -151,6 +192,9 @@ func compactionCut(nodes []core.ContextNode, retain int) (int, error) {
 	for keep > 0 && !balancedBefore(nodes, keep) {
 		keep--
 	}
+	if keep == 1 && nodes[0].Message.Role == "system" {
+		return 0, nil
+	}
 	return keep, nil
 }
 
@@ -172,24 +216,9 @@ func balancedBefore(nodes []core.ContextNode, index int) bool {
 	return len(pending) == 0
 }
 
-// The provider error dialects the pinned llm package recognizes as a
-// context-window overflow.
-var contextOverflowPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(?:^|[^a-z0-9])context[\s_-](?:length|window)[\s_-](?:exceed(?:ed|s)?|overflow(?:ed)?|limit[\s_-]exceeded)(?:$|[^a-z0-9])`),
-	regexp.MustCompile(`(?i)\b(?:maximum|max)(?:\s+(?:allowed|supported))?\s+context\s+(?:length|window)\b`),
-	regexp.MustCompile(`(?i)\b(?:request|prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)\s+for\s+(?:(?:this|the)\s+)?(?:model(?:'s)?\s+)?context(?:\s+window)?\b`),
-	regexp.MustCompile(`(?i)\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b`),
-	regexp.MustCompile(`(?i)\b(?:input|prompt|request|messages?)\b.{0,40}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,40}\b(?:the\s+)?(?:model(?:'s)?\s+)?context(?:\s+(?:length|window))?\b`),
-}
-
 func isContextOverflow(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
-	for _, pattern := range contextOverflowPatterns {
-		if pattern.MatchString(err.Error()) {
-			return true
-		}
-	}
-	return false
+	return core.IsContextWindowExceeded(err.Error())
 }

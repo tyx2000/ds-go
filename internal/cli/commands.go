@@ -416,7 +416,7 @@ func (a *App) slash(line string) (bool, error) {
 		return false, nil
 	case "plan":
 		if strings.TrimSpace(arg) == "off" {
-			if len(a.attachments) > 0 {
+			if a.hasDraftAttachments(a.session.ID) {
 				return false, errors.New("attachments cannot accompany /plan off")
 			}
 			return false, a.setPlan(a.session.ID, false)
@@ -424,7 +424,7 @@ func (a *App) slash(line string) (bool, error) {
 		if err := a.setPlan(a.session.ID, true); err != nil {
 			return false, err
 		}
-		if strings.TrimSpace(arg) != "" || len(a.attachments) > 0 {
+		if strings.TrimSpace(arg) != "" || a.hasDraftAttachments(a.session.ID) {
 			return false, a.turn(arg)
 		}
 		a.line("Plan mode selected; /plan off to leave.\n")
@@ -502,22 +502,15 @@ func (a *App) attach(path string) error {
 	if path == "" {
 		return errors.New("file path required")
 	}
+	id := a.session.ID
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(a.session.CWD, path)
+		cwd, err := a.ensureWorkingDirectory(a.ctx, id)
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(cwd, path)
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 20<<20 {
-		return errors.New("attachment must be a regular file of at most 20 MiB")
-	}
-	b, err := io.ReadAll(io.LimitReader(f, 20<<20+1))
+	b, err := readAttachmentFile(a.ctx, path)
 	if err != nil {
 		return err
 	}
@@ -526,33 +519,19 @@ func (a *App) attach(path string) error {
 		if kind != "image/png" && kind != "image/jpeg" && kind != "image/gif" && kind != "image/webp" {
 			return errors.New("unsupported image type")
 		}
-		count, total := 0, 0
-		for _, block := range a.attachments {
-			if block.Type == "image" {
-				count++
-				if source, ok := block.Source.(map[string]any); ok {
-					switch size := source["bytes"].(type) {
-					case int:
-						total += size
-					case int64:
-						total += int(size)
-					case float64:
-						total += int(size)
-					}
-				}
-			}
+		if err := a.checkDraftImageLimit(id, len(b)); err != nil {
+			return err
 		}
-		if count >= 20 || total+len(b) > 200<<20 {
-			return errors.New("message image attachments exceed 20 images or 200 MiB")
-		}
-		if err := a.assertImageRoute(a.ctx, a.session.ID, path); err != nil {
+		if err := a.assertImageRoute(a.ctx, id, path); err != nil {
 			return err
 		}
 		ref, err := a.attachmentStore.SaveImage(a.ctx, b, kind, filepath.Base(path))
 		if err != nil {
 			return err
 		}
-		a.attachments = append(a.attachments, core.Block{Type: "image", Source: ref.Source()})
+		if err := a.addDraftAttachment(id, core.Block{Type: "image", Source: ref.Source()}, len(b)); err != nil {
+			return err
+		}
 	} else {
 		if len(b) > 1<<20 {
 			return errors.New("text attachment exceeds 1 MiB")
@@ -560,7 +539,9 @@ func (a *App) attach(path string) error {
 		if strings.IndexByte(string(b), 0) >= 0 {
 			return errors.New("binary document attachments are not yet supported")
 		}
-		a.attachments = append(a.attachments, core.Block{Type: "text", Text: fmt.Sprintf("Attached file %s:\n%s", path, b)})
+		if err := a.addDraftAttachment(id, core.Block{Type: "text", Text: fmt.Sprintf("Attached file %s:\n%s", path, b)}, 0); err != nil {
+			return err
+		}
 	}
 	a.line("Attached %s to the next message.\n", clean(path))
 	return nil

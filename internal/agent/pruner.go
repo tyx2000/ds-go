@@ -174,6 +174,7 @@ func (e *Engine) pruneToolResults(ctx context.Context, id, turn string) (int, er
 		message := candidate.Message
 		message.Content = append([]core.Block(nil), message.Content...)
 		changed := false
+		candidateResults := 0
 		for index, block := range message.Content {
 			if block.Type != "tool_result" {
 				continue
@@ -184,7 +185,7 @@ func (e *Engine) pruneToolResults(ctx context.Context, id, turn string) (int, er
 			}
 			if pruned {
 				message.Content[index].Content = content
-				prunedResults++
+				candidateResults++
 				changed = true
 			}
 		}
@@ -213,6 +214,7 @@ func (e *Engine) pruneToolResults(ctx context.Context, id, turn string) (int, er
 		if err != nil {
 			return prunedResults, err
 		}
+		prunedResults += candidateResults
 		e.emit(id, "event", event)
 	}
 	return prunedResults, nil

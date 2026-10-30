@@ -2,9 +2,10 @@ package agent
 
 import "dsgo/internal/core"
 
-// Compaction is a new user prompt and may run on a newly selected route. Native
-// signatures and encrypted reasoning must never be interpolated into that text;
-// durable neutral text and tool correlations remain the source for the summary.
+// Compaction replays real message/block structure, including attachment refs
+// and tool correlations. Auxiliary calls cannot inherit opaque route authority:
+// visible reasoning is neutral text; signatures and encrypted blocks stay only
+// in the original audit records and never become model-readable text.
 func compactionHistory(messages []core.Message) []core.Message {
 	result := make([]core.Message, 0, len(messages))
 	for _, message := range messages {
@@ -20,11 +21,20 @@ func compactionHistory(messages []core.Message) []core.Message {
 			}
 			block.Signature = ""
 			if block.Type == "thinking" || block.Type == "reasoning" {
-				block.Source, block.Data = nil, ""
+				text := block.Text
+				if text == "" {
+					text = block.Thinking
+				}
+				if text == "" {
+					continue
+				}
+				block = core.Block{Type: "text", Text: text}
 			}
 			out.Content = append(out.Content, block)
 		}
-		result = append(result, out)
+		if len(out.Content) > 0 {
+			result = append(result, out)
+		}
 	}
 	return result
 }

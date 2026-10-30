@@ -1,0 +1,16 @@
+package model
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestReviewTooLongHTTPClassification(t *testing.T){
+	c:=New(Options{APIKey:"synthetic-review-key"})
+	err:=c.responseError(&http.Response{StatusCode:400,Header:http.Header{},Body:io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"Input too long for this model"}}`))})
+	var failure *Error
+	if !errors.As(err,&failure)||failure.Code!="CONTEXT_WINDOW_EXCEEDED"{t.Fatalf("recoverable overflow became %v; the agent can no longer recognize the discarded server message",err)}
+}

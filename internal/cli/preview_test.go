@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/png"
 	"os"
@@ -65,7 +66,11 @@ func TestPreviewRedirectedImageNeverWritesControlProtocols(t *testing.T) {
 	if err := a.previewCommand("image.png"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "\x1b") || !strings.Contains(out.String(), `"width": 4`) {
+	var metadata struct {
+		Kind  string                      `json:"kind"`
+		Image struct{ Width, Height int } `json:"image"`
+	}
+	if strings.Contains(out.String(), "\x1b") || json.Unmarshal(out.Bytes(), &metadata) != nil || metadata.Kind != "image" || metadata.Image.Width != 4 || metadata.Image.Height != 4 {
 		t.Fatalf("invalid image metadata JSON %s", out.String())
 	}
 }

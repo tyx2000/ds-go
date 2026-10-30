@@ -65,7 +65,7 @@ func TestPlanReviewUsesExplicitChoiceAndAppliesAfterToolBatch(t *testing.T) {
 	for _, tc := range []struct {
 		answer   string
 		approved bool
-	}{{"1\n", true}, {"Approve\n", true}, {"2\n", false}, {"yes\n", false}, {"Revise the rollback section\n", false}} {
+	}{{"1\n", true}, {"Approve\n", true}, {"2\n", false}, {"yes\n", false}, {"Revise the rollback section\n", false}, {"3\nApprove\n", false}, {"Other\n1\n", false}, {"3\n2025\n", false}} {
 		t.Run(strings.TrimSpace(tc.answer), func(t *testing.T) {
 			a, s := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
 				return core.Response{}, nil
