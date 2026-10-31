@@ -533,8 +533,6 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 		}
 		child.ParentID = id
 		child.Provider = parent.Provider
-		child.Preset = parent.Preset
-		child.ExecutionMode = parent.ExecutionMode
 		child.Delegated = parent.Delegated
 		child.Plan = plan
 		child.Model = parent.Model

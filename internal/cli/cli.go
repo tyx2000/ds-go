@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"dsgo/internal/agent"
 	"dsgo/internal/attachments"
@@ -24,18 +23,16 @@ import (
 	"dsgo/internal/core"
 	"dsgo/internal/mcp"
 	"dsgo/internal/reference"
-	"dsgo/internal/schedule"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
 	"dsgo/internal/tui"
-	"dsgo/internal/workflow"
 )
 
 const Version = "0.1.0-dev"
 
 type flags struct {
-	home, cwd, model, provider, thinking, permission, approval, mode, preset, resume string
-	json                                                                             bool
+	home, cwd, model, provider, thinking, permission, approval, resume string
+	json                                                               bool
 }
 
 func (f *flags) bind(fs *flag.FlagSet) {
@@ -46,8 +43,6 @@ func (f *flags) bind(fs *flag.FlagSet) {
 	fs.StringVar(&f.thinking, "thinking", f.thinking, "off, low, high, max")
 	fs.StringVar(&f.permission, "permission", f.permission, "read-only, workspace-write, full-access")
 	fs.StringVar(&f.approval, "approval", f.approval, "on-request, never")
-	fs.StringVar(&f.mode, "mode", f.mode, "native, ptc, ptc-repl")
-	fs.StringVar(&f.preset, "preset", f.preset, "standard, ptc, minimal, cordis")
 	fs.StringVar(&f.resume, "resume", f.resume, "session ID or latest")
 	fs.BoolVar(&f.json, "json", f.json, "newline-delimited JSON output")
 }
@@ -59,9 +54,7 @@ type App struct {
 	store            *state.Store
 	cfg              state.Config
 	registry         *tools.Registry
-	hostTerminals    *tools.TerminalController
 	engine           *agent.Engine
-	schedules        *schedule.Store
 	skills           []instructions.Skill
 	session          core.Session
 	writeMu          sync.Mutex
@@ -93,8 +86,6 @@ type App struct {
 	receipts         sync.Map
 	background       sync.WaitGroup
 	streamKinds      sync.Map
-	workflows        *workflow.Engine
-	workflowNotices  workflowJobNotices
 	signalMu         sync.Mutex
 	signalRefs       int
 	signalStop       func()
@@ -164,7 +155,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", Version, core.UpstreamCommit)
 		return 0
 	}
-	a.unattended = command == "run" || command == "daemon"
+	a.unattended = command == "run"
 	if command == "run" || command == "chat" {
 		sub := flag.NewFlagSet(command, flag.ContinueOnError)
 		sub.SetOutput(errOut)
@@ -215,12 +206,6 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if a.flags.approval != "" {
 		a.cfg.ApprovalPolicy = a.flags.approval
 	}
-	if a.flags.mode != "" {
-		a.cfg.ExecutionMode = a.flags.mode
-	}
-	if a.flags.preset != "" {
-		a.cfg.AgentPreset = a.flags.preset
-	}
 	if err = a.cfg.Validate(); err != nil {
 		return a.fail(err)
 	}
@@ -263,19 +248,6 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if command == "doctor" {
 		return a.doctor()
 	}
-	a.schedules, err = schedule.Open(root)
-	if err != nil {
-		return a.fail(err)
-	}
-	if err = a.configureSchedules(); err != nil {
-		return a.fail(err)
-	}
-	if command == "schedule" || command == "schedules" {
-		if err = a.scheduleCommand(args); err != nil {
-			return a.fail(err)
-		}
-		return 0
-	}
 	a.skills, err = instructions.Skills(a.flags.cwd)
 	if err != nil {
 		return a.fail(err)
@@ -284,7 +256,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		a.print(a.skills)
 		return 0
 	}
-	if command != "chat" && command != "run" && command != "daemon" && command != "tools" {
+	if command != "chat" && command != "run" && command != "tools" {
 		return a.fail(fmt.Errorf("unknown command %q; run dsgo help", command))
 	}
 	system, err := instructions.System(a.flags.cwd, a.skills)
@@ -293,30 +265,10 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	a.registry = tools.New()
 	defer a.registry.Close()
-	a.hostTerminals, err = tools.NewTerminalController(userTerminalOptions(a.cfg.UserTerminal))
-	if err != nil {
-		return a.fail(err)
-	}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if closeErr := a.hostTerminals.Close(closeCtx); closeErr != nil {
-			a.errorLine(fmt.Sprintf("close terminals: %v", closeErr))
-		}
-	}()
-	a.registry.SetDispatcher(a.Execute)
-	a.registry.SetNodePath(a.cfg.NodePath)
 	if err = a.configureJobs(); err != nil {
 		return a.fail(err)
 	}
 	a.registry.SetSpillDir(filepath.Join(root, "artifacts", "shell-output"))
-	ptcMode := "per-call"
-	if a.cfg.ExecutionMode == "ptc-repl" {
-		ptcMode = "persistent-in-memory"
-	}
-	if err = a.registry.SetPTCMode(ptcMode); err != nil {
-		return a.fail(err)
-	}
 	replayKey, err := a.store.ReplayKey()
 	if err != nil {
 		return a.fail(err)
@@ -330,7 +282,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return a.fail(err)
 	}
 	models = a.attachmentStore.ResolveProjected(models, a.projectRequestImage)
-	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, ExecutionMode: a.cfg.ExecutionMode, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext, ContextFor: a.contextRoute})
+	a.engine = agent.New(a.store, models, a, agent.Options{Provider: a.cfg.SelectedProvider, Model: a.cfg.Model, Thinking: a.cfg.Thinking, MaxTokens: a.cfg.MaxTokens, MaxSteps: a.cfg.MaxSteps, ContextTokens: a.cfg.ContextTokens, ApprovalPolicy: a.cfg.ApprovalPolicy, System: system, Approve: a.approve, SystemFor: a.systemFor, ToolsFor: a.specsFor, RequestContext: a.requestContext, ContextFor: a.contextRoute})
 	a.engine.Notify = a.notice
 	a.engine.UpdateOptions(func(o *agent.Options) {
 		o.PrepareInput = a.prepareInput
@@ -350,11 +302,6 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if err = a.registerTools(); err != nil {
 		return a.fail(err)
 	}
-	defer func() {
-		if a.workflows != nil {
-			a.workflows.Close()
-		}
-	}()
 	if command == "run" || command == "chat" {
 		if err = a.selectSession(a.flags.resume); err != nil {
 			return a.fail(err)
@@ -366,15 +313,6 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	}
 	if command == "tools" {
 		a.print(a.registry.Specs())
-		return 0
-	}
-	if command == "daemon" {
-		if len(args) > 0 && args[0] != "run" {
-			return a.fail(errors.New("usage: dsgo daemon run"))
-		}
-		if err = a.daemon(); err != nil && !errors.Is(err, context.Canceled) {
-			return a.fail(err)
-		}
 		return 0
 	}
 	if command == "run" {
@@ -494,13 +432,6 @@ func (a *App) selectSession(id string) error {
 			return err
 		}
 		next.Permission, next.Model, next.Provider, next.Thinking = a.cfg.Permission, a.cfg.Model, a.cfg.SelectedProvider, a.cfg.Thinking
-		next.Preset, next.ExecutionMode = a.cfg.AgentPreset, a.cfg.ExecutionMode
-		if a.flags.mode == "" && next.Preset == "ptc" {
-			next.ExecutionMode = "ptc"
-		}
-		if next.Preset == "minimal" {
-			next.ExecutionMode = "native"
-		}
 	} else {
 		next, err = a.store.Get(id)
 		if err != nil {
@@ -520,18 +451,6 @@ func (a *App) selectSession(id string) error {
 		}
 		if a.flags.thinking != "" {
 			next.Thinking = a.flags.thinking
-		}
-		if a.flags.preset != "" {
-			next.Preset, next.ExecutionMode = a.flags.preset, "native"
-			if next.Preset == "ptc" {
-				next.ExecutionMode = "ptc"
-			}
-		}
-		if a.flags.mode != "" {
-			next.ExecutionMode = a.flags.mode
-		}
-		if sessionPreset(next) == "minimal" && a.sessionMode(next) != "native" {
-			return errors.New("minimal uses its native persistent bash tool")
 		}
 	}
 	publish := false
@@ -885,11 +804,7 @@ func (a *App) doctor() int {
 			backend = "Linux bubblewrap"
 		}
 	}
-	node, err := exec.LookPath(a.cfg.NodePath)
-	if err != nil {
-		node = "unavailable (PTC requires Node >=22.13)"
-	}
-	a.print(map[string]any{"version": Version, "upstream": core.UpstreamCommit, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "home": a.flags.home, "cwd": a.flags.cwd, "api_key_configured": a.cfg.APIKey != "", "base_url": a.cfg.BaseURL, "sandbox": backend, "node": node, "image_codecs": attachments.ImageCodecStatus(), "preview": a.previewDoctorInfo(), "parity": "in progress; see docs/PARITY.md"})
+	a.print(map[string]any{"version": Version, "upstream": core.UpstreamCommit, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "home": a.flags.home, "cwd": a.flags.cwd, "api_key_configured": a.cfg.APIKey != "", "base_url": a.cfg.BaseURL, "sandbox": backend, "image_codecs": attachments.ImageCodecStatus(), "parity": "in progress; see docs/PARITY.md"})
 	return 0
 }
 
@@ -912,8 +827,6 @@ Usage:
   dsgo config [show|set KEY VALUE|reset]
   dsgo auth [login|logout|status|profile]  Official DeepSeek account login
   dsgo models [account]                Inspect available model routes
-  dsgo schedule [list|create JSON|update JSON|get|history|delete]
-  dsgo daemon run                     Deliver persistent schedules
   dsgo skills                         List discovered filesystem skills
   dsgo tools                          List built-in tool schemas
   dsgo doctor                         Inspect dependencies and configuration
@@ -921,8 +834,7 @@ Usage:
 
 Flags: --home PATH --cwd PATH --model NAME --thinking off|low|high|max
        --permission read-only|workspace-write|full-access
-       --approval on-request|never --preset standard|ptc|minimal|cordis
-       --mode native|ptc|ptc-repl --resume ID|latest --json
+       --approval on-request|never --resume ID|latest --json
 
 Credentials: DEEPSEEK_API_KEY or DSGO_API_KEY (preferred over saved config).
              dsgo config set api_key --stdin reads a key without argv exposure.

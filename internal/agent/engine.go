@@ -33,7 +33,6 @@ type Options struct {
 	ContextFor       func(context.Context, core.Request) (ContextRoute, error)
 	ToolResultPruner *ToolResultPruneConfig
 	ApprovalPolicy   string
-	ExecutionMode    string
 	System           string
 	SystemFor        func(core.Session) (string, error)
 	ToolsFor         func(core.Session) []core.ToolSpec
@@ -58,19 +57,18 @@ type Notice struct {
 }
 
 type Engine struct {
-	Store      Store
-	Model      core.Model
-	Tools      core.Executor
-	Options    Options
-	Notify     func(Notice)
-	mu         sync.Mutex
-	running    map[string]context.CancelFunc
-	idle       map[string]chan struct{}
-	closed     bool
-	wg         sync.WaitGroup
-	repeat     *RepeatReminder
-	structured map[string]*StructuredRun
-	liveTools  map[string]liveToolExecution
+	Store     Store
+	Model     core.Model
+	Tools     core.Executor
+	Options   Options
+	Notify    func(Notice)
+	mu        sync.Mutex
+	running   map[string]context.CancelFunc
+	idle      map[string]chan struct{}
+	closed    bool
+	wg        sync.WaitGroup
+	repeat    *RepeatReminder
+	liveTools map[string]liveToolExecution
 }
 
 func New(store Store, model core.Model, tools core.Executor, opts Options) *Engine {
@@ -148,7 +146,6 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 	e.idle[id] = make(chan struct{})
 	e.wg.Add(1)
 	e.mu.Unlock()
-	structured := e.structuredRun(id)
 	defer func() {
 		cancel()
 		e.mu.Lock()
@@ -159,12 +156,6 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		e.mu.Unlock()
 		e.wg.Done()
 	}()
-	if structured != nil {
-		defer structured.abortUncommitted()
-		if input != nil && !structured.AcceptsInput() {
-			return errors.New("structured output already staged: input is closed")
-		}
-	}
 	if locker, ok := e.Store.(interface {
 		AcquireSession(context.Context, string) (func(), error)
 	}); ok {
@@ -333,41 +324,11 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		if opts.ToolsFor != nil {
 			specs = opts.ToolsFor(session)
 		}
-		if spec, ok := e.StructuredSpec(id); ok {
-			specs = withStructuredSpec(specs, spec)
-		}
-		executionMode := session.ExecutionMode
-		if executionMode == "" {
-			executionMode = opts.ExecutionMode
-			if session.Preset == "ptc" {
-				executionMode = "ptc"
-			}
-		}
-		if executionMode == "ptc" || executionMode == "ptc-repl" {
-			filtered := []core.ToolSpec{}
-			for _, s := range specs {
-				if s.Name == "run_code" {
-					filtered = append(filtered, s)
-				}
-			}
-			if len(filtered) == 0 {
-				return errors.New("PTC runtime is unavailable")
-			}
-			specs = filtered
-		}
 		system = opts.System
 		if opts.SystemFor != nil {
 			system, err = opts.SystemFor(session)
 			if err != nil {
 				return err
-			}
-		}
-		if instruction := e.StructuredInstruction(id); instruction != "" {
-			system += "\n\n" + instruction
-			if executionMode == "ptc" || executionMode == "ptc-repl" {
-				if spec, ok := e.StructuredSpec(id); ok {
-					system += "\nPTC binding: tools.structured_output(args)\nArguments JSON schema: " + string(spec.InputSchema)
-				}
 			}
 		}
 		provider := session.Provider
@@ -501,18 +462,10 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return err
 			}
 			e.emit(id, "tool_started", call)
-			tc := core.ToolContext{SessionID: id, TurnID: turn, CallID: call.ID, ExecutionID: ID(), CWD: session.CWD, WorkspaceRoot: session.CWD, ExecutionMode: executionMode, Permission: session.Permission, ApprovalPolicy: opts.ApprovalPolicy, Approve: opts.Approve}
-			if spec, ok := e.StructuredSpec(id); ok {
-				tc.ExtraTools = []core.ToolSpec{spec}
-			}
+			tc := core.ToolContext{SessionID: id, TurnID: turn, CallID: call.ID, ExecutionID: ID(), CWD: session.CWD, WorkspaceRoot: session.CWD, Permission: session.Permission, ApprovalPolicy: opts.ApprovalPolicy, Approve: opts.Approve}
 			tc.Inject = func(message core.Message) error {
 				if message.Role != "user" {
 					return errors.New("injected message must have user role")
-				}
-				if structured != nil {
-					if err := structured.acceptInjected(); err != nil {
-						return err
-					}
 				}
 				inboxMu.Lock()
 				inbox = append(inbox, message)
@@ -526,17 +479,11 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				defer emitMu.Unlock()
 				if emitErr == nil {
 					emitErr = appendEvent(kind, data)
-					if emitErr == nil && kind == "tool/subresult" {
-						e.structuredSubresult(id, tc.ExecutionID, data)
-					}
 				}
 				return emitErr
 			}
 			e.beginToolExecution(tc)
-			result, handled, toolErr := e.ExecuteStructured(ctx, tc, call.Name, call.Input)
-			if !handled {
-				result, toolErr = e.Tools.Execute(ctx, tc, call.Name, call.Input)
-			}
+			result, toolErr := e.Tools.Execute(ctx, tc, call.Name, call.Input)
 			if notice := e.repeat.Observe(id, call.Name, call.Input); notice != nil {
 				message := core.TextMessage("user", notice.Text)
 				message.Source = notice.Source
@@ -561,7 +508,6 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			if err = appendEvent("tool/finished", map[string]any{"id": call.ID, "name": call.Name, "result": result}); err != nil {
 				return err
 			}
-			e.structuredTopResult(id, tc.ExecutionID, tc.CallID, !result.IsError && ctx.Err() == nil)
 			e.endToolExecution(tc)
 			e.emit(id, "tool_finished", map[string]any{"name": call.Name, "result": result})
 			var content any = result.Content
@@ -582,16 +528,8 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				return x
 			}
 		}
-		if structured != nil {
-			structured.consumeInjected(len(inbox))
-		}
 		if err = ctx.Err(); err != nil {
 			return err
-		}
-		if structured != nil {
-			if _, captured := structured.Captured(); captured {
-				return nil
-			}
 		}
 	}
 	return fmt.Errorf("turn reached the configured limit of %d model steps", opts.MaxSteps)

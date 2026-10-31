@@ -84,21 +84,14 @@ func TestInstructionBaselineIsDurableAndReconciledOncePerProcess(t *testing.T) {
 	}
 }
 
-func TestInstructionBaselineSkipsMinimalAndLeavesSystemPrompt(t *testing.T) {
+func TestInstructionBaselineLeavesSystemPrompt(t *testing.T) {
 	t.Setenv("DSH_HOME", t.TempDir())
 	t.Setenv("DSH_AGENTS_HOME", t.TempDir())
-	a, s := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
+	_, s := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
 		return core.Response{}, nil
 	}))
 	if err := os.WriteFile(filepath.Join(s.CWD, "AGENTS.md"), []byte("Project rule.\n"), 0600); err != nil {
 		t.Fatal(err)
-	}
-	s.Preset = "minimal"
-	if err := a.prepareStep(a.ctx, s, "turn1", 1); err != nil {
-		t.Fatal(err)
-	}
-	if got := baselines(t, a, s.ID); len(got) != 0 {
-		t.Fatalf("minimal preset received a baseline: %q", got)
 	}
 	system, err := instructions.System(s.CWD, nil)
 	if err != nil || strings.Contains(system, "Project rule.") {

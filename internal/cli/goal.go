@@ -17,7 +17,6 @@ type goalRuntime struct {
 	mu      sync.Mutex
 	service *state.Goals
 	drivers map[string]*goalDriver
-	owned   map[string]*goalOwnedActivation
 	closing bool
 	wg      sync.WaitGroup
 }
@@ -27,36 +26,7 @@ type goalDriver struct {
 	done      chan struct{}
 }
 
-type goalOwnedActivation struct{ parent string }
-
-// ownGoalActivation records runtime ownership for fixed producers which drive
-// Engine sessions outside the subagent manager, such as workflow members.
-// Durable ParentID/Delegated metadata is not this relation: an independent
-// manual fork or cold top-level resume may retain that metadata and be a root.
-func (a *App) ownGoalActivation(id, parent string) func() {
-	entry := &goalOwnedActivation{parent: parent}
-	a.goals.mu.Lock()
-	if a.goals.owned == nil {
-		a.goals.owned = make(map[string]*goalOwnedActivation)
-	}
-	a.goals.owned[id] = entry
-	a.goals.mu.Unlock()
-	return func() {
-		a.goals.mu.Lock()
-		if a.goals.owned[id] == entry {
-			delete(a.goals.owned, id)
-		}
-		a.goals.mu.Unlock()
-	}
-}
-
 func (a *App) goalRuntimeRoot(id string) bool {
-	a.goals.mu.Lock()
-	owned := a.goals.owned[id] != nil
-	a.goals.mu.Unlock()
-	if owned {
-		return false
-	}
 	if a.manager == nil {
 		return true
 	}

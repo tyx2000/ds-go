@@ -15,7 +15,6 @@ import (
 	"dsgo/internal/agent"
 	instructions "dsgo/internal/context"
 	"dsgo/internal/core"
-	"dsgo/internal/schedule"
 	"dsgo/internal/tools"
 	"dsgo/internal/webtools"
 )
@@ -105,42 +104,6 @@ func (m *agents) activeInTreeLocked(parent string) int {
 	return count
 }
 
-// canCompleteStructured observes only this session's owned activation tree.
-// The structured runtime separately seals dispatch and accepted Inbox work,
-// including calls which have not reached their manager reservation yet.
-func (m *agents) canCompleteStructured(id string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closing || m.app.ctx.Err() != nil || m.isDrainingLocked(id) {
-		return false
-	}
-	for childID, child := range m.children {
-		if childID != id && m.belongsLocked(childID, id) && child.Status == "running" {
-			return false
-		}
-	}
-	for _, reservation := range m.reservations {
-		if m.belongsLocked(reservation.parent, id) {
-			return false
-		}
-	}
-	for childID, pending := range m.settling {
-		if pending > 0 && m.belongsLocked(childID, id) {
-			return false
-		}
-	}
-	for root, count := range m.draining {
-		if count > 0 && m.belongsLocked(root, id) {
-			return false
-		}
-	}
-	for _, wake := range m.wakeRuns {
-		if m.belongsLocked(wake.target, id) {
-			return false
-		}
-	}
-	return true
-}
 func (m *agents) close() {
 	m.mu.Lock()
 	m.closing = true
@@ -402,8 +365,6 @@ func (m *agents) spawnChild(callCtx context.Context, parent, label, mode string,
 	s.Provider = p.Provider
 	s.Model = p.Model
 	s.Thinking = p.Thinking
-	s.Preset = p.Preset
-	s.ExecutionMode = p.ExecutionMode
 	s.Permission = p.Permission
 	if s.Permission == "" {
 		s.Permission = m.app.cfg.Permission
@@ -555,14 +516,6 @@ func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw
 		tc.HarnessHome = a.store.Root()
 	}
 	a.beginJobOutputBound(tc, name, raw)
-	if tc.Nested {
-		defer func() { result, err = a.finishJobOutputBound(tc, name, result, err) }()
-	}
-	if a.engine != nil {
-		if result, handled, err := a.engine.ExecuteStructured(ctx, tc, name, raw); handled {
-			return result, err
-		}
-	}
 	registryName := name
 	if a.store != nil && tc.SessionID != "" {
 		s, err := a.store.Get(tc.SessionID)
@@ -576,21 +529,13 @@ func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw
 				break
 			}
 		}
-		// Saved dsgo development transcripts may still contain these names;
-		// replay them through the same policy while advertising official names.
-		if sessionPreset(s) != "minimal" {
-			switch name {
-			case "read_file", "write_file", "edit_file", "run_shell", "jobs", "spawn_agent", "wait_agent":
-				allowed = true
-			case "bash":
-				registryName = "standard_bash"
-			}
+		if name == "bash" {
+			registryName = "standard_bash"
 		}
 		if !allowed {
-			return core.ToolResult{}, fmt.Errorf("tool %q is unavailable in preset %q", name, sessionPreset(s))
+			return core.ToolResult{}, fmt.Errorf("tool %q is unavailable", name)
 		}
 		tc.WorkspaceRoot = s.CWD
-		tc.ExecutionMode = a.sessionMode(s)
 		if s.Delegated {
 			// A delegated child cannot request an approval which widens the
 			// scope captured at its creation or cold restoration.
@@ -605,22 +550,9 @@ func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw
 		tc.CWD = cwd
 	}
 
-	switch name {
-	case "jobs":
-		if result, handled, err := a.workflowJobs(ctx, tc, raw); handled {
-			return result, err
-		}
-	case "job_output", "job_list", "job_kill":
-		if result, handled, err := a.workflowJobControls(ctx, tc, name, raw); handled {
-			return result, err
-		}
-	}
 	return a.registry.Execute(ctx, tc, registryName, raw)
 }
 func (a *App) systemFor(s core.Session) (string, error) {
-	if sessionPreset(s) == "minimal" {
-		return "You are a helpful software engineer assistant.", nil
-	}
 	skills, err := instructions.Skills(s.CWD)
 	if err != nil {
 		return "", err
@@ -652,31 +584,6 @@ func (a *App) registerTools() error {
 			return core.ToolResult{Content: text}, err
 		}},
 		{userQuestionSpec(), a.question},
-		{toolSpec("update_todo", "Persist the current task list in the session.", `{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"text":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["text","status"]}}},"required":["items"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-			if tc.Emit != nil {
-				if err := tc.Emit("todo/updated", raw); err != nil {
-					return core.ToolResult{}, err
-				}
-			}
-			return toolValue(map[string]any{"saved": true}), nil
-		}},
-		{toolSpec("spawn_agent", "Delegate a task to a fresh or forked child agent; children inherit the workspace and permissions.", `{"type":"object","properties":{"prompt":{"type":"string"},"label":{"type":"string"},"mode":{"type":"string","enum":["fresh","fork"]}},"required":["prompt"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-			var p struct{ Prompt, Label, Mode string }
-			if err := agent.Decode(raw, &p); err != nil {
-				return core.ToolResult{}, err
-			}
-			if strings.TrimSpace(p.Prompt) == "" {
-				return core.ToolResult{}, errors.New("prompt required")
-			}
-			id, err := a.manager.spawnPrepared(ctx, tc.SessionID, p.Prompt, p.Label, p.Mode, func(id string) error {
-				if tc.Emit != nil {
-					return tc.Emit("subagent/started", map[string]any{"id": id, "label": p.Label, "mode": p.Mode})
-				}
-				return nil
-			})
-			return toolValue(map[string]any{"id": id}), err
-		}},
-		{toolSpec("wait_agent", "Wait for an owned subagent, returning its settled transcript. Timeout does not cancel the child.", `{"type":"object","properties":{"id":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["id"]}`), a.waitAgent},
 		{toolSpec("get_current_time", "Read the current clock in an IANA timezone.", `{"type":"object","properties":{"timezone":{"type":"string"}}}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 			var p struct{ Timezone string }
 			if err := agent.Decode(raw, &p); err != nil {
@@ -691,56 +598,12 @@ func (a *App) registerTools() error {
 			}
 			return toolValue(map[string]any{"time": time.Now().In(loc).Format(time.RFC3339), "timezone": p.Timezone}), nil
 		}},
-		{toolSpec("create_reminder", "Persist a reminder for this session. The dsgo daemon must be running for delivery. kind: once/interval/daily/weekly/cron; once uses at RFC3339, interval every duration, daily/weekly clock HH:MM, weekly weekday 0..6, cron five fields. timezone uses IANA names.", `{"type":"object","properties":{"prompt":{"type":"string"},"kind":{"type":"string"},"at":{"type":"string"},"every":{"type":"string"},"clock":{"type":"string"},"weekday":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"}},"required":["prompt","kind"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-			var t schedule.Task
-			if err := agent.Decode(raw, &t); err != nil {
-				return core.ToolResult{}, err
-			}
-			t.SessionID = tc.SessionID
-			t, err := a.schedules.Create(t)
-			if err == nil && tc.Emit != nil {
-				tc.Emit("schedule/created", t)
-			}
-			return toolValue(t), err
-		}},
-		{toolSpec("list_reminders", "List this session's durable reminders.", `{"type":"object","properties":{}}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-			all, err := a.schedules.List()
-			if err != nil {
-				return core.ToolResult{}, err
-			}
-			out := []schedule.Task{}
-			for _, t := range all {
-				if t.SessionID == tc.SessionID {
-					out = append(out, t)
-				}
-			}
-			return toolValue(out), nil
-		}},
-		{toolSpec("cancel_reminder", "Cancel an owned reminder.", `{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-			var p struct{ ID string }
-			if err := agent.Decode(raw, &p); err != nil {
-				return core.ToolResult{}, err
-			}
-			tasks, err := a.schedules.List()
-			if err != nil {
-				return core.ToolResult{}, err
-			}
-			for _, t := range tasks {
-				if t.ID == p.ID && t.SessionID == tc.SessionID {
-					return toolValue(map[string]any{"cancelled": true}), a.schedules.Cancel(p.ID)
-				}
-			}
-			return core.ToolResult{}, errors.New("reminder does not belong to this session")
-		}},
 	}
 	defs = append(defs, struct {
 		s core.ToolSpec
 		h tools.Handler
 	}{toolSpec("exit_plan_mode", "Use only in plan mode. Present your complete markdown plan for review; approval leaves plan mode from the next step, while feedback keeps planning.", `{"type":"object","additionalProperties":false,"properties":{"plan":{"type":"string"}},"required":["plan"]}`), a.exitPlanMode})
 	for _, d := range defs {
-		if d.s.Name == "create_reminder" || d.s.Name == "list_reminders" || d.s.Name == "cancel_reminder" || d.s.Name == "update_todo" {
-			continue
-		}
 		if err := a.registry.Register(d.s, d.h); err != nil {
 			return err
 		}
@@ -758,16 +621,7 @@ func (a *App) registerTools() error {
 	if err := a.registerWorkingDirectoryTool(); err != nil {
 		return err
 	}
-	if err := a.registerArtifactTools(); err != nil {
-		return err
-	}
 	if err := a.registerImageTool(); err != nil {
-		return err
-	}
-	if err := a.registerWorkflowTools(); err != nil {
-		return err
-	}
-	if err := a.registerScheduleTools(); err != nil {
 		return err
 	}
 	key, token, err := credentials(a.cfg)
@@ -844,38 +698,21 @@ func (a *App) agentMessage(ctx context.Context, tc core.ToolContext, raw json.Ra
 	}
 	return toolValue(map[string]any{"queued": true}), nil
 }
-func (a *App) waitAgent(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-	var p struct {
-		ID        string
-		TimeoutMS int `json:"timeout_ms"`
-	}
-	if err := agent.Decode(raw, &p); err != nil {
-		return core.ToolResult{}, err
-	}
-	m := a.manager
-	m.mu.Lock()
-	c, err := m.owned(tc.SessionID, p.ID)
-	if err != nil {
-		m.mu.Unlock()
-		return core.ToolResult{}, err
-	}
-	outcome := c.outcome
-	m.mu.Unlock()
-	if p.TimeoutMS <= 0 {
-		p.TimeoutMS = 30000
-	}
-	if p.TimeoutMS > 600000 {
-		p.TimeoutMS = 600000
-	}
-	select {
-	case <-outcome.done:
-		return toolValue(map[string]any{"id": p.ID, "status": outcome.status, "error": outcome.err, "messages": outcome.messages}), nil
-	case <-ctx.Done():
-		return core.ToolResult{}, ctx.Err()
-	case <-time.After(time.Duration(p.TimeoutMS) * time.Millisecond):
-		return toolValue(map[string]any{"id": p.ID, "running": true}), nil
-	}
-}
 func signalContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+}
+
+// disposeOwner quiesces resources owned by one completed session without
+// touching unrelated sessions or the application.
+func (a *App) disposeOwner(ctx context.Context, id string) error {
+	if a.manager != nil {
+		a.manager.pauseWakes(id)
+	}
+	if a.registry != nil {
+		if err := a.registry.CancelSessionJobs(ctx, id); err != nil {
+			return err
+		}
+		a.registry.InvalidateSession(id)
+	}
+	return nil
 }

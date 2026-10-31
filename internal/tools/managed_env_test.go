@@ -54,7 +54,7 @@ func TestManagedEnvOfficialSourceCorpus(t *testing.T) {
 			case "fresh":
 				base, err = freshShellEnvironment(base, tc)
 			case "persistent":
-				base = persistentShellEnvironment(base, test.Session, test.PTY)
+				t.Skip("dsgo has no persistent model shell")
 			case "host":
 				base = overlayEnvironment(base, map[string]string{"DSH_SESSION_ID": test.Session})
 			case "generic":
@@ -142,18 +142,6 @@ func TestManagedShellNamespacesStaySeparateFromGenericAndHostProcesses(t *testin
 		}
 	}
 	base := processEnvironment(os.Environ())
-	managed := environmentMap(persistentShellEnvironment(base, tc.SessionID, "pty-7"))
-	for key, want := range map[string]string{"DSH_SESSION_ID": "owner", "DSH_SHELL": "1", "DSH_PTY_SESSION_ID": "pty-7", "TERM": "dumb", "PAGER": "cat", "GIT_PAGER": "cat"} {
-		if managed[key] != want {
-			t.Errorf("persistent %s = %q", key, managed[key])
-		}
-	}
-	for _, key := range []string{"DSH_HOME", "DSH_PROFILE", "DSH_PROFILE_DIR", "DSH_STALE_PARENT"} {
-		if _, ok := managed[key]; ok {
-			t.Errorf("fresh/ambient fact %s entered model PTY", key)
-		}
-	}
-	// This is the Host API's explicit layer, not the model's PTY layer.
 	host := environmentMap(overlayEnvironment(base, map[string]string{"DSH_SESSION_ID": "host-owner", "TERM": "xterm-256color"}))
 	for _, key := range []string{"DSH_HOME", "DSH_PROFILE", "DSH_SHELL", "DSH_PTY_SESSION_ID"} {
 		if _, ok := host[key]; ok {

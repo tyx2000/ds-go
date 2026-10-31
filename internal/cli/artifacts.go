@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"dsgo/internal/agent"
 	"dsgo/internal/artifacts"
 	"dsgo/internal/core"
 	"dsgo/internal/tools"
@@ -32,71 +31,22 @@ func (a *App) artifactWarning(err error) {
 	a.errorLine("dsgo: artifact preview unavailable: " + clean(err.Error()))
 }
 
-func (a *App) artifactTurn(sessionID, turnID string) (int, string, error) {
+// artifactTurn numbers turnID among the session's turns, counting from 1.
+func (a *App) artifactTurn(sessionID, turnID string) (int, error) {
 	events, err := a.store.Events(sessionID)
 	if err != nil {
-		return 0, "", err
+		return 0, err
 	}
 	turn := 0
-	callID := ""
-	found := false
 	for _, e := range events {
 		if e.Type == "turn/started" {
 			turn++
 			if e.TurnID == turnID {
-				found = true
+				return turn, nil
 			}
 		}
-		if e.TurnID == turnID && (e.Type == "tool/started" || e.Type == "tool/subcall") {
-			var p struct{ ID, Name string }
-			if json.Unmarshal(e.Data, &p) == nil && p.Name == "present" {
-				callID = p.ID
-			}
-		}
-		if found && e.TurnID != turnID && e.Type == "turn/started" {
-			return turn - 1, callID, nil
-		}
 	}
-	if !found {
-		return 0, "", errors.New("present requires an open agent turn")
-	}
-	return turn, callID, nil
-}
-
-func (a *App) registerArtifactTools() error {
-	return a.registry.Register(toolSpec("present", "Declare existing files as final deliverables for the user. Use it when the user needs a separate file, especially Office documents, spreadsheets, and slide decks; prefer your final response when that suffices. The user opens the current files; their contents are not copied.", `{"type":"object","properties":{"files":{"type":"array","description":"Usually the 1-2 most important deliverables; at most 4 per call.","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":false,"properties":{"path":{"type":"string","description":"Path of an existing regular file. Relative paths use the Session working directory."},"description":{"type":"string","description":"Brief description for the user."}},"required":["path"]}}},"required":["files"],"additionalProperties":false}`), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
-		if tc.TurnID == "" || tc.SessionID == "" || tc.Emit == nil {
-			return core.ToolResult{}, errors.New("present requires an open agent turn and durable event channel")
-		}
-		var p struct {
-			Files []artifacts.PresentedFile `json:"files"`
-		}
-		if err := agent.Decode(raw, &p); err != nil {
-			return core.ToolResult{}, err
-		}
-		files, err := artifacts.ResolvePresented(ctx, tc.CWD, p.Files)
-		if err != nil {
-			return core.ToolResult{}, err
-		}
-		turn, callID, err := a.artifactTurn(tc.SessionID, tc.TurnID)
-		if err != nil {
-			return core.ToolResult{}, err
-		}
-		if tc.CallID != "" {
-			callID = tc.CallID
-		}
-		if err = ctx.Err(); err != nil {
-			return core.ToolResult{}, err
-		}
-		value := struct {
-			Turn  int                       `json:"turn"`
-			Files []artifacts.PresentedFile `json:"files"`
-		}{turn, files}
-		if err = tc.Emit("deliverables/presented", map[string]any{"turn": turn, "callId": callID, "files": files}); err != nil {
-			return core.ToolResult{}, err
-		}
-		return toolValue(value), nil
-	})
+	return 0, errors.New("workspace changes require an open agent turn")
 }
 
 // workspaceTurnStarted/Finished are engine lifecycle hooks. Engine session locks
@@ -141,7 +91,7 @@ func (a *App) workspaceTurnFinished(ctx context.Context, session core.Session, t
 		a.artifactWarning(err)
 		return nil
 	}
-	turn, _, err := a.artifactTurn(session.ID, turnID)
+	turn, err := a.artifactTurn(session.ID, turnID)
 	if err != nil {
 		return err
 	}
@@ -184,19 +134,6 @@ func (a *App) spillToolResult(ctx context.Context, tc core.ToolContext, name str
 	}
 	if ctx.Err() != nil {
 		return result, nil
-	}
-	if name == "present" && !result.IsError {
-		var value struct {
-			Files []artifacts.PresentedFile `json:"files"`
-		}
-		if json.Unmarshal([]byte(result.Content), &value) == nil {
-			var lines []string
-			for _, file := range value.Files {
-				lines = append(lines, "Presented "+file.Path)
-			}
-			result.Content = strings.Join(lines, "\n")
-			return result, nil
-		}
 	}
 	s, err := a.artifactStore()
 	if err != nil {
@@ -261,7 +198,7 @@ func (a *App) artifactCommand(args []string) error {
 	if command == "list" {
 		out := []map[string]any{}
 		for _, event := range events {
-			if event.Type == "deliverables/presented" || event.Type == "workspace/changes" || event.Type == "spill/saved" {
+			if event.Type == "workspace/changes" || event.Type == "spill/saved" {
 				var value any
 				if json.Unmarshal(event.Data, &value) != nil {
 					continue

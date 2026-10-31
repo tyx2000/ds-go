@@ -23,7 +23,7 @@ func TestSCOR005SignalHelper(t *testing.T) {
 	ready, survived := os.Getenv("DSGO_SCOR005_READY"), os.Getenv("DSGO_SCOR005_SURVIVED")
 	var a *App
 	a, parent := lifecycleApp(t, lifecycleModel(func(ctx context.Context, request core.Request, _ func(core.Delta)) (core.Response, error) {
-		_, err := a.registry.Execute(ctx, core.ToolContext{SessionID: request.SessionID, CWD: filepath.Dir(ready), Permission: "full-access"}, "run_shell", core.JSON(map[string]any{"command": fmt.Sprintf("printf ready > %q; sleep 0.7; printf survived > %q", ready, survived), "timeout_ms": 5000}))
+		_, err := a.registry.Execute(ctx, core.ToolContext{SessionID: request.SessionID, CWD: filepath.Dir(ready), Permission: "full-access"}, "standard_bash", core.JSON(map[string]any{"description": "Signal fixture", "command": fmt.Sprintf("printf ready > %q; sleep 0.7; printf survived > %q", ready, survived)}))
 		return core.Response{Content: []core.Block{{Type: "text", Text: "done"}}}, err
 	}))
 	a.session = parent

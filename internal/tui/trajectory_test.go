@@ -61,9 +61,6 @@ func TestTrajectoryPairsPTCTreeUsageAndRecordedTiming(t *testing.T) {
 	if string(code.Input) != `{ "code": "return tools.read_file({path:'x'});\n" }` {
 		t.Fatalf("original args changed: %s", code.Input)
 	}
-	if !strings.Contains(strings.Join(Inspector(*code, "code"), "\n"), "   2  ") {
-		t.Fatal("code trailing newline lost")
-	}
 	if p.Records[len(p.Records)-2].Kind != "compaction" {
 		t.Fatalf("standalone compaction order %+v", p.Records)
 	}

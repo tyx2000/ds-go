@@ -1,6 +1,6 @@
 # 官方 Web 功能与 dsgo 终端移植对照
 
-更新日期：2026-10-27（Asia/Shanghai）。当前状态：**实施中，尚未达到官方 Web 完整功能对等**。本表记录已实现的 Go 行为、可复核的测试入口和剩余工作，不是完整交付报告，也不以基本聊天可运行作为验收结论。
+更新日期：2026-10-30（Asia/Shanghai）。当前状态：**定位调整为终端编码助手，不再以官方 Web 完整功能对等为目标**。本表记录已实现的 Go 行为、可复核的测试入口和剩余工作，不是完整交付报告，也不以基本聊天可运行作为验收结论。
 
 ## 基线与范围
 
@@ -24,6 +24,21 @@ Web 配置中的 `desktop-product-telemetry`、`product-analytics`、`ui-sidebar
 - **部分**：已承载部分能力，表中列出的官方行为或终端操作仍有缺口。
 - **缺失／待核对**：没有对应实现，或没有足够证据确认完成。
 - **载体重建**：原网页/插件运行框架改用 Go 固定模块与终端交互；使用功能仍需逐项验收。
+
+## 范围调整（2026-10-30）
+
+dsgo 作为编码辅助工具，只保留与编码直接相关的官方能力：模型接口与账户、上下文计量/剪枝/压缩、agent-instructions 与 time-context、文件读写编辑、fresh-shell `bash` 与 `job_*`、计划模式、todo、提问、子代理、目标、MCP、联网搜索与抓取、技能、图片附件、会话管理和每轮工作区改动记录。
+
+以下官方功能已从 dsgo 移除，下表中涉及它们的行仅作历史记录，不再计入对齐范围：
+
+- 定时提醒：`schedule_*` 工具、`dsgo schedule`、`dsgo daemon`、`/schedules`。
+- 文档预览：`/preview`（PDF、Office、表格、HTML）。
+- JS 工作流：`workflow` 工具、`/workflows`，以及仅供它使用的 `structured_output` 运行时。
+- 用户终端面板：`/terminal`、`user_terminal` 配置，以及模型的 PTY `terminal` 工具。
+- TypeScript 代码执行（PTC）：`run_code`、`ptc`/`ptc-repl` 执行模式、`/mode`、`--mode`、`execution_mode`、`node_path`。
+- 预设：只保留 standard；`ptc`、`minimal`、`cordis` 预设、`/preset`、`--preset`、`agent_preset` 以及子代理的 `agent_preset` 选择已移除。
+- `present` 交付物工具（`/artifacts` 的每轮改动与完整输出保留）。
+- dsgo 开发期旧工具：持久 `bash`、`run_shell`/`jobs`、`read_file`/`write_file`/`edit_file`、`spawn_agent`/`wait_agent`。`/jobs` 改为 `/jobs`、`/jobs ID`、`/jobs kill ID`。
 
 ## 模型、上下文与会话
 

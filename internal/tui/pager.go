@@ -180,7 +180,7 @@ func (p *pager) draw() error {
 	}
 	help := "j/k ↑↓ · PgUp/PgDn · Enter inspect · [/] turn · s stats · u outline · / search · q back"
 	if p.detail {
-		help = "j/k scroll · Tab view · i input · o output · r raw · c code · t timing · Enter back · q return"
+		help = "j/k scroll · Tab view · i input · o output · r raw · t timing · Enter back · q return"
 		if len(rows) > 0 && len(userRecordSecrets(rows[min(p.selected, len(rows)-1)])) > 0 {
 			help = "v show/hide secret · V next secret · " + help
 		}
@@ -322,7 +322,7 @@ func (p *pager) handle(key string) bool {
 		}
 	case "tab":
 		if p.detail {
-			tabs := []string{"summary", "input", "output", "timing", "raw", "code"}
+			tabs := []string{"summary", "input", "output", "timing", "raw"}
 			for i, t := range tabs {
 				if t == p.tab {
 					p.tab = tabs[(i+1)%len(tabs)]
@@ -331,9 +331,9 @@ func (p *pager) handle(key string) bool {
 			}
 			p.detailTop = 0
 		}
-	case "i", "o", "r", "c", "t":
+	case "i", "o", "r", "t":
 		if p.detail {
-			p.tab = map[string]string{"i": "input", "o": "output", "r": "raw", "c": "code", "t": "timing"}[key]
+			p.tab = map[string]string{"i": "input", "o": "output", "r": "raw", "t": "timing"}[key]
 			p.detailTop = 0
 		}
 	}

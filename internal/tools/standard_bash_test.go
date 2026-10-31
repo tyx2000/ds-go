@@ -94,7 +94,7 @@ func TestStandardBashValidationAndEscalation(t *testing.T) {
 	}
 }
 
-func TestStandardBashBackgroundJobsAndLegacyView(t *testing.T) {
+func TestStandardBashBackgroundJobs(t *testing.T) {
 	r := New()
 	defer r.Close()
 	tc := core.ToolContext{SessionID: "one", CWD: t.TempDir(), Permission: "full-access"}
@@ -117,12 +117,6 @@ func TestStandardBashBackgroundJobsAndLegacyView(t *testing.T) {
 	}
 	if _, text = standardCall(t, r, tc, "job_kill", map[string]any{"job_id": started.JobID}); text != "job "+started.JobID+" had already finished [status: completed, exit code: 0]" {
 		t.Fatalf("kill after finish: %q", text)
-	}
-	// The original jobs tool still sees official bash jobs, with combined output.
-	legacy := call(t, r, tc, "jobs", map[string]any{"action": "output", "id": started.JobID})
-	var view map[string]any
-	if err := json.Unmarshal([]byte(legacy.Content), &view); err != nil || view["kind"] != "bash" || view["job_status"] != "completed" || view["status"] != "finished" || view["output"] != "firstsecond" || view["description"] != "Print twice" {
-		t.Fatalf("legacy view: %s", legacy.Content)
 	}
 }
 
@@ -163,7 +157,9 @@ func TestStandardBashPromotionAndKillReasons(t *testing.T) {
 	if id == "" {
 		t.Fatal("foreground command was not listed while running")
 	}
-	call(t, r, tc, "jobs", map[string]any{"action": "kill", "id": id})
+	if err := r.StopJob(context.Background(), tc.SessionID, id); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case text = <-done:
 	case <-time.After(5 * time.Second):
@@ -325,7 +321,9 @@ func TestJobNoticesSkipWaitsModelKillsAndTeardown(t *testing.T) {
 	standardCall(t, r, tc, "job_kill", map[string]any{"job_id": id})
 	handled(0)
 	id = start("sleep 30", nil)
-	call(t, r, tc, "jobs", map[string]any{"action": "kill", "id": id})
+	if err := r.StopJob(context.Background(), tc.SessionID, id); err != nil {
+		t.Fatal(err)
+	}
 	if n := handled(1)[0]; !strings.Contains(n.Text, "[status: killed, killed through jobs]") {
 		t.Fatalf("human stop notice: %q", n.Text)
 	}

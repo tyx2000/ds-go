@@ -19,7 +19,7 @@ func captureJobBound(a *App, tc core.ToolContext, name string, limit int) {
 func TestJobOutputFinalizerKeepsCanonicalForPTCAndCapturedRemoval(t *testing.T) {
 	a := &App{registry: tools.New()}
 	defer a.registry.Close()
-	tc := core.ToolContext{SessionID: "owner", TurnID: "turn", ExecutionID: "exec", CallID: "read", Nested: true}
+	tc := core.ToolContext{SessionID: "owner", TurnID: "turn", ExecutionID: "exec", CallID: "read"}
 	canonical := core.JSON(map[string]any{"text": strings.Repeat("文", 100) + "tail", "job": map[string]string{"id": "removed-job", "status": "completed", "detail": "exit code: 0"}})
 	captureJobBound(a, tc, "job_output", 90)
 	res, err := a.finishJobOutputBound(tc, "job_output", core.ToolResult{Value: canonical, Content: string(canonical)}, nil)

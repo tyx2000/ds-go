@@ -9,7 +9,6 @@ import (
 	instructions "dsgo/internal/context"
 	"dsgo/internal/core"
 	"dsgo/internal/webtools"
-	"dsgo/internal/workflow"
 )
 
 // The deployment-owned plan section is copied from the pinned standard patch.
@@ -24,9 +23,6 @@ type promptSection struct {
 }
 
 func (a *App) presetSystemPrompt(s core.Session, skills []instructions.Skill) string {
-	if sessionPreset(s) == "minimal" {
-		return "You are a helpful software engineer assistant."
-	}
 	modelName := s.Model
 	if modelName == "" {
 		modelName = a.cfg.Model
@@ -36,10 +32,8 @@ func (a *App) presetSystemPrompt(s core.Session, skills []instructions.Skill) st
 		{"deployment:persona-prefix", 0, fmt.Sprintf("You are a coding agent powered by the %s model.", modelName)},
 		{"tool:web", 2000, webtools.Guidance()},
 		{"tool:goal", 2400, a.goalGuidance()},
-		{"tool:workflow", 2600, workflow.Guidance},
 		{"tool:subagent", 2800, subagentGuidance},
 		{"mcp:servers", 3100, a.mcpSystemInstructions()},
-		{"tools:sdk", 5000, a.ptcInstructions(s)},
 	}
 	// Keep the existing filesystem skill catalog available until the dedicated
 	// skill-context producer is ported. Its instruction bodies remain load-on-demand.

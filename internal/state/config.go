@@ -53,37 +53,29 @@ type JobSettings struct {
 }
 
 type Config struct {
-	BaseURL                        string                     `json:"base_url"`
-	APIKey                         string                     `json:"api_key,omitempty"`
-	Account                        json.RawMessage            `json:"account,omitempty"`
-	Model                          string                     `json:"model"`
-	Thinking                       string                     `json:"thinking"`
-	MaxTokens                      int                        `json:"max_tokens"`
-	MaxSteps                       int                        `json:"max_steps"`
-	Permission                     string                     `json:"permission"`
-	ApprovalPolicy                 string                     `json:"approval_policy"`
-	ExecutionMode                  string                     `json:"execution_mode"`
-	AgentPreset                    string                     `json:"agent_preset"`
-	SubagentMaxDepth               *int                       `json:"subagent_max_depth,omitempty"`
-	SubagentMaxActive              int                        `json:"subagent_max_active"`
-	SubagentModelSelection         json.RawMessage            `json:"subagent_model_selection,omitempty"`
-	SubagentAgentPreset            string                     `json:"subagent_agent_preset,omitempty"`
-	SubagentAllowedAgentPresets    []string                   `json:"subagent_allowed_agent_presets,omitempty"`
-	NodePath                       string                     `json:"node_path"`
-	Language                       string                     `json:"language"`
-	ContextTokens                  int                        `json:"context_tokens"`
-	GoalDefaultMaxRounds           int                        `json:"goal_default_max_rounds"`
-	GoalBlockedAfterRounds         int                        `json:"goal_blocked_after_rounds"`
-	ScheduleDeliveryHistoryDays    int                        `json:"schedule_delivery_history_days"`
-	ScheduleDeliveryHistoryRecords int                        `json:"schedule_delivery_history_records"`
-	MCPServers                     map[string]MCPServer       `json:"mcp_servers,omitempty"`
-	ProviderProfiles               map[string]json.RawMessage `json:"provider_profiles,omitempty"`
-	SelectedProvider               string                     `json:"selected_provider"`
-	FileReferences                 *FileReferenceSettings     `json:"file_references,omitempty"`
-	SessionReferences              *SessionReferenceSettings  `json:"session_references,omitempty"`
-	Jobs                           *JobSettings               `json:"jobs,omitempty"`
-	UserTerminal                   *UserTerminalSettings      `json:"user_terminal,omitempty"`
-	TimeContext                    *TimeContextSettings       `json:"time_context,omitempty"`
+	BaseURL                string                     `json:"base_url"`
+	APIKey                 string                     `json:"api_key,omitempty"`
+	Account                json.RawMessage            `json:"account,omitempty"`
+	Model                  string                     `json:"model"`
+	Thinking               string                     `json:"thinking"`
+	MaxTokens              int                        `json:"max_tokens"`
+	MaxSteps               int                        `json:"max_steps"`
+	Permission             string                     `json:"permission"`
+	ApprovalPolicy         string                     `json:"approval_policy"`
+	SubagentMaxDepth       *int                       `json:"subagent_max_depth,omitempty"`
+	SubagentMaxActive      int                        `json:"subagent_max_active"`
+	SubagentModelSelection json.RawMessage            `json:"subagent_model_selection,omitempty"`
+	Language               string                     `json:"language"`
+	ContextTokens          int                        `json:"context_tokens"`
+	GoalDefaultMaxRounds   int                        `json:"goal_default_max_rounds"`
+	GoalBlockedAfterRounds int                        `json:"goal_blocked_after_rounds"`
+	MCPServers             map[string]MCPServer       `json:"mcp_servers,omitempty"`
+	ProviderProfiles       map[string]json.RawMessage `json:"provider_profiles,omitempty"`
+	SelectedProvider       string                     `json:"selected_provider"`
+	FileReferences         *FileReferenceSettings     `json:"file_references,omitempty"`
+	SessionReferences      *SessionReferenceSettings  `json:"session_references,omitempty"`
+	Jobs                   *JobSettings               `json:"jobs,omitempty"`
+	TimeContext            *TimeContextSettings       `json:"time_context,omitempty"`
 }
 
 func DefaultRoot() string {
@@ -104,8 +96,8 @@ func DefaultConfig() Config {
 	return Config{
 		BaseURL: "https://api.deepseek.com/anthropic", Model: "deepseek-flash", Thinking: "high",
 		MaxTokens: 16384, MaxSteps: 100, Permission: "workspace-write", ApprovalPolicy: "on-request",
-		ExecutionMode: "native", AgentPreset: "standard", NodePath: "node", Language: "zh-CN", ContextTokens: 196608,
-		MCPServers: map[string]MCPServer{}, SubagentMaxActive: 8, GoalDefaultMaxRounds: 256, GoalBlockedAfterRounds: 3, ScheduleDeliveryHistoryDays: 30, ScheduleDeliveryHistoryRecords: 200,
+		Language: "zh-CN", ContextTokens: 196608,
+		MCPServers: map[string]MCPServer{}, SubagentMaxActive: 8, GoalDefaultMaxRounds: 256, GoalBlockedAfterRounds: 3,
 		ProviderProfiles: map[string]json.RawMessage{}, SelectedProvider: "deepseek-official",
 	}
 }
@@ -161,12 +153,6 @@ func (c Config) Validate() error {
 	if err := c.TimeContext.validate(); err != nil {
 		return err
 	}
-	if err := c.UserTerminal.validate(); err != nil {
-		return err
-	}
-	if c.ScheduleDeliveryHistoryDays < 1 || c.ScheduleDeliveryHistoryDays > 3650 || c.ScheduleDeliveryHistoryRecords < 1 || c.ScheduleDeliveryHistoryRecords > 10000 {
-		return errors.New("schedule delivery retention must be 1..3650 days and 1..10000 records")
-	}
 	if jobs := c.Jobs; jobs != nil {
 		wait, maximum := 30000.0, 600000.0
 		if jobs.WaitTimeoutMS != nil {
@@ -218,24 +204,6 @@ func (c Config) Validate() error {
 	if c.SubagentMaxActive < 1 {
 		return errors.New("subagent_max_active must be a positive integer")
 	}
-	if c.SubagentAgentPreset != "" && !oneOf(c.SubagentAgentPreset, "standard", "ptc", "minimal", "cordis") {
-		return errors.New("subagent_agent_preset must name a supported preset")
-	}
-	if c.SubagentAllowedAgentPresets != nil {
-		if len(c.SubagentAllowedAgentPresets) == 0 {
-			return errors.New("subagent_allowed_agent_presets must not be empty")
-		}
-		seen := map[string]bool{}
-		for _, preset := range c.SubagentAllowedAgentPresets {
-			if !oneOf(preset, "standard", "ptc", "minimal", "cordis") || seen[preset] {
-				return errors.New("subagent_allowed_agent_presets must contain unique supported presets")
-			}
-			seen[preset] = true
-		}
-		if c.SubagentAgentPreset != "" && !seen[c.SubagentAgentPreset] {
-			return errors.New("subagent_agent_preset must be in subagent_allowed_agent_presets")
-		}
-	}
 	if c.SubagentMaxDepth != nil && (*c.SubagentMaxDepth < 0 || uint64(*c.SubagentMaxDepth) > 9007199254740991) {
 		return errors.New("subagent_max_depth must be a non-negative safe integer")
 	}
@@ -277,15 +245,6 @@ func (c Config) Validate() error {
 	}
 	if !oneOf(c.ApprovalPolicy, "on-request", "never") {
 		return errors.New("approval_policy must be on-request or never")
-	}
-	if !oneOf(c.ExecutionMode, "native", "ptc", "ptc-repl") {
-		return errors.New("execution_mode must be native, ptc, or ptc-repl")
-	}
-	if !oneOf(c.AgentPreset, "standard", "ptc", "minimal", "cordis") {
-		return errors.New("agent_preset must be standard, ptc, minimal, or cordis")
-	}
-	if strings.TrimSpace(c.NodePath) == "" {
-		return errors.New("node_path must not be empty")
 	}
 	for name, s := range c.MCPServers {
 		if len(name) < 1 || len(name) > 32 || strings.IndexFunc(name, func(r rune) bool {

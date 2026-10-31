@@ -91,29 +91,6 @@ func (m *agents) describeChild(id, label, mode string) (subagentDescriptor, erro
 	return desc, err
 }
 
-func validChildPreset(id string) bool {
-	return id == "standard" || id == "ptc" || id == "minimal" || id == "cordis"
-}
-
-func independentChildPreset(events []core.Event) (string, bool, error) {
-	for _, event := range ownSubagentEvents(events) {
-		if event.Type == "subagent/descriptor" {
-			break
-		}
-		if event.Type != "agent-preset/selected" {
-			continue
-		}
-		var selection struct {
-			AgentPreset *string `json:"agentPreset"`
-		}
-		if err := decodeOfficialObject(event.Data, &selection); err != nil || selection.AgentPreset == nil || !validChildPreset(*selection.AgentPreset) {
-			return "", false, errors.New("selected child preset is unavailable")
-		}
-		return *selection.AgentPreset, true, nil
-	}
-	return "", false, nil
-}
-
 func (m *agents) establishCatalogChild(parent string, session core.Session, desc subagentDescriptor) error {
 	_, err := m.app.store.Append(parent, "", "subagent/catalog", subagentCatalogFact{Version: 0, ChildID: session.ID, ChildCreatedAt: session.CreatedAt.UnixMilli(), Mode: desc.Mode, Label: desc.Label})
 	return err
@@ -259,22 +236,6 @@ func (m *agents) restoreChildLocked(ctx context.Context, parent, id string) (*ch
 	desc, policy, err := readChildDescriptor(events)
 	if err != nil {
 		return nil, err
-	}
-	preset, independent, err := independentChildPreset(events)
-	if err != nil {
-		return nil, err
-	}
-	if independent {
-		session.Preset, session.ExecutionMode = preset, "native"
-		if preset == "ptc" {
-			session.ExecutionMode = "ptc"
-		}
-	} else {
-		parentSession, err := m.app.store.Get(parent)
-		if err != nil {
-			return nil, err
-		}
-		session.Preset, session.ExecutionMode = parentSession.Preset, parentSession.ExecutionMode
 	}
 	if _, err = m.app.subagentDepth(id); err != nil {
 		return nil, err

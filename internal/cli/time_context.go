@@ -14,8 +14,7 @@ import (
 	"dsgo/internal/timezone"
 )
 
-// The standard, ptc and cordis presets carry the official time-context
-// reading (packages/context/time-context): on eligible steps a durable user
+// Sessions carry the official time-context reading (packages/context/time-context): on eligible steps a durable user
 // message gives the current time, the request's time zone and the elapsed
 // time since the preceding model-visible message.
 const timeContextRefreshMS = 600000
@@ -78,9 +77,6 @@ func (a *App) timeContextNow() time.Time {
 // appendTimeContext records a reading before a model step, folding its
 // baselines from durable history so restarts and forks keep the same state.
 func (a *App) appendTimeContext(ctx context.Context, s core.Session, turn string, step int) error {
-	if sessionPreset(s) == "minimal" {
-		return nil
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

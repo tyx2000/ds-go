@@ -28,13 +28,13 @@ func TestCLICompletionSelectsPathsAndSessionsWithoutReadingContents(t *testing.T
 		t.Fatal(err)
 	}
 	complete := a.completionFor(parent.ID)
-	slash := complete("/pre", 4)
+	slash := complete("/pla", 4)
 	found := false
 	for _, candidate := range slash.Candidates {
-		found = found || candidate.Value == "/preview "
+		found = found || candidate.Value == "/plan "
 	}
 	if !found {
-		t.Fatal("slash completion missing preview", slash)
+		t.Fatal("slash completion missing plan", slash)
 	}
 	line := `请看 @"source`
 	files := complete(line, len([]rune(line)))

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +13,8 @@ import (
 	"strings"
 
 	"dsgo/internal/core"
-	"dsgo/internal/schedule"
 	"dsgo/internal/state"
+	"dsgo/internal/tools"
 )
 
 func (a *App) config(args []string) int {
@@ -44,17 +43,17 @@ func (a *App) config(args []string) int {
 	raw := core.JSON(a.cfg)
 	var obj map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &obj)
-	if _, ok := obj[key]; !ok && key != "api_key" && key != "mcp_servers" && key != "provider_profiles" && key != "subagent_max_depth" && key != "subagent_model_selection" && key != "subagent_agent_preset" && key != "subagent_allowed_agent_presets" && key != "file_references" && key != "session_references" && key != "jobs" && key != "user_terminal" && key != "time_context" {
+	if _, ok := obj[key]; !ok && key != "api_key" && key != "mcp_servers" && key != "provider_profiles" && key != "subagent_max_depth" && key != "subagent_model_selection" && key != "file_references" && key != "session_references" && key != "jobs" && key != "time_context" {
 		return a.fail(fmt.Errorf("unknown config key %q", key))
 	}
 	switch key {
-	case "max_tokens", "max_steps", "context_tokens", "subagent_max_depth", "subagent_max_active", "goal_default_max_rounds", "goal_blocked_after_rounds", "schedule_delivery_history_days", "schedule_delivery_history_records":
+	case "max_tokens", "max_steps", "context_tokens", "subagent_max_depth", "subagent_max_active", "goal_default_max_rounds", "goal_blocked_after_rounds":
 		n, err := strconv.Atoi(value)
 		if err != nil {
 			return a.fail(err)
 		}
 		obj[key] = core.JSON(n)
-	case "mcp_servers", "provider_profiles", "subagent_model_selection", "subagent_allowed_agent_presets", "file_references", "session_references", "jobs", "user_terminal", "time_context":
+	case "mcp_servers", "provider_profiles", "subagent_model_selection", "file_references", "session_references", "jobs", "time_context":
 		if !json.Valid([]byte(value)) {
 			return a.fail(errors.New("configuration value must be JSON"))
 		}
@@ -143,11 +142,6 @@ func (a *App) sessions(args []string) error {
 		a.line("%s", clean(string(b)))
 		return nil
 	case "delete":
-		if a.hostTerminals != nil {
-			if err := a.hostTerminals.CloseOwner(a.ctx, id); err != nil {
-				return err
-			}
-		}
 		return a.store.Delete(id)
 	case "rename", "archive", "unarchive":
 		s, err := a.store.Get(id)
@@ -165,123 +159,6 @@ func (a *App) sessions(args []string) error {
 		return a.store.Update(s)
 	default:
 		return errors.New("session action must be list, show, fork, export, rename, archive, unarchive, or delete")
-	}
-}
-
-func (a *App) scheduleCommand(args []string) error {
-	if len(args) == 0 || args[0] == "list" {
-		tasks, err := a.schedules.Catalog(a.ctx)
-		if err != nil {
-			return err
-		}
-		a.print(tasks)
-		return nil
-	}
-	if len(args) < 2 {
-		return errors.New("usage: dsgo schedule create JSON | cancel ID")
-	}
-	switch args[0] {
-	case "create":
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(strings.Join(args[1:], " ")), &fields); err != nil {
-			return err
-		}
-		if _, legacy := fields["kind"]; !legacy {
-			var sessionID string
-			if err := json.Unmarshal(fields["session_id"], &sessionID); err != nil {
-				return errors.New("session_id is required")
-			}
-			delete(fields, "session_id")
-			request, err := schedule.DecodeCreate(core.JSON(fields))
-			if err != nil {
-				return err
-			}
-			view, err := a.schedules.CreateOfficial(a.ctx, sessionID, request)
-			if err != nil {
-				return err
-			}
-			a.print(view)
-			return nil
-		}
-		var t schedule.Task
-		if err := json.Unmarshal([]byte(strings.Join(args[1:], " ")), &t); err != nil {
-			return err
-		}
-		if _, err := a.store.Get(t.SessionID); err != nil {
-			return err
-		}
-		t, err := a.schedules.Create(t)
-		if err != nil {
-			return err
-		}
-		a.print(t)
-		return nil
-	case "cancel":
-		return a.schedules.Cancel(args[1])
-	case "get", "history", "delete":
-		if len(args) < 3 {
-			return errors.New("session ID and reminder ID are required")
-		}
-		sessionID, id := args[1], args[2]
-		if args[0] == "delete" {
-			result, err := a.schedules.DeleteOfficial(a.ctx, sessionID, id)
-			if err != nil {
-				return err
-			}
-			a.print(result)
-			return nil
-		}
-		if args[0] == "get" {
-			record, err := a.schedules.GetRecord(a.ctx, sessionID, id)
-			if err != nil {
-				return err
-			}
-			a.print(record)
-			return nil
-		}
-		limit := 50
-		if len(args) > 3 {
-			n, err := strconv.Atoi(args[3])
-			if err != nil {
-				return err
-			}
-			limit = n
-		}
-		before := ""
-		if len(args) > 4 {
-			before = args[4]
-		}
-		history, err := a.schedules.History(a.ctx, sessionID, id, limit, before)
-		if err != nil {
-			return err
-		}
-		a.print(history)
-		return nil
-	case "update":
-		var p struct {
-			SessionID string               `json:"session_id"`
-			ID        string               `json:"id"`
-			Expected  schedule.Record      `json:"expected"`
-			Patch     schedule.UpdatePatch `json:"patch"`
-		}
-		if err := json.Unmarshal([]byte(strings.Join(args[1:], " ")), &p); err != nil {
-			return err
-		}
-		if p.SessionID == "" || p.ID == "" || p.Expected.ID == "" {
-			return errors.New("update requires session_id, id, expected full record, and patch")
-		}
-		result, err := a.schedules.UpdateOfficial(a.ctx, p.SessionID, p.ID, p.Expected, p.Patch)
-		if err != nil {
-			return err
-		}
-		if result.Updated && result.View != nil {
-			a.print(result.View)
-		} else {
-			a.print(result)
-		}
-		return nil
-	default:
-		return errors.New("unknown schedule action")
 	}
 }
 
@@ -372,27 +249,6 @@ func (a *App) slash(line string) (bool, error) {
 			a.registry.InvalidateSession(next.ID)
 		}
 		return false, nil
-	case "mode":
-		if arg == "" {
-			a.line("%s\n", a.sessionMode(a.session))
-			return false, nil
-		}
-		if arg != "native" && arg != "ptc" && arg != "ptc-repl" {
-			return false, errors.New("mode must be native, ptc, or ptc-repl")
-		}
-		if sessionPreset(a.session) == "minimal" && arg != "native" {
-			return false, errors.New("minimal uses its native persistent bash tool")
-		}
-		next := a.session
-		next.ExecutionMode = arg
-		if err := a.store.Update(next); err != nil {
-			return false, err
-		}
-		a.registry.InvalidateSession(next.ID)
-		a.session = next
-		return false, nil
-	case "preset":
-		return false, a.presetCommand(arg)
 	case "cwd":
 		input := map[string]any{}
 		if arg != "" {
@@ -412,7 +268,7 @@ func (a *App) slash(line string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		a.print(map[string]any{"session": s, "events": len(events), "plan": a.plan.Load(), "mode": a.sessionMode(s), "preset": sessionPreset(s)})
+		a.print(map[string]any{"session": s, "events": len(events), "plan": a.plan.Load()})
 		return false, nil
 	case "plan":
 		if strings.TrimSpace(arg) == "off" {
@@ -449,32 +305,17 @@ func (a *App) slash(line string) (bool, error) {
 	case "diff":
 		return false, a.diff()
 	case "jobs":
-		if arg == "" {
-			return false, a.invoke("jobs", map[string]any{"action": "list"})
-		}
-		var p map[string]any
-		if err := json.Unmarshal([]byte(arg), &p); err != nil {
-			return false, err
-		}
-		return false, a.invoke("jobs", p)
-	case "terminal":
-		return false, a.terminalCommand(arg)
+		return false, a.jobsCommand(strings.Fields(arg))
 	case "agents":
 		a.print(a.manager.list(a.session.ID))
 		return false, nil
-	case "workflows":
-		return false, a.workflowCommand(strings.Fields(arg))
 	case "artifacts":
 		return false, a.artifactCommand(strings.Fields(arg))
-	case "preview":
-		return false, a.previewCommand(arg)
 	case "trajectory", "stats":
 		if cmd == "stats" {
 			arg = "stats"
 		}
 		return false, a.trajectoryCommand(arg)
-	case "schedules":
-		return false, a.scheduleCommand(nil)
 	case "goal":
 		return false, a.goalCommand(arg)
 	case "todo":
@@ -489,12 +330,16 @@ func (a *App) invoke(name string, input any) error {
 	if err != nil {
 		return err
 	}
-	tc := core.ToolContext{SessionID: a.session.ID, CWD: cwd, WorkspaceRoot: a.session.CWD, ExecutionMode: a.sessionMode(a.session), Permission: a.session.Permission, ApprovalPolicy: a.cfg.ApprovalPolicy, Approve: a.approve, Emit: func(kind string, data any) error { _, err := a.store.Append(a.session.ID, "", kind, data); return err }}
+	tc := core.ToolContext{SessionID: a.session.ID, CWD: cwd, WorkspaceRoot: a.session.CWD, Permission: a.session.Permission, ApprovalPolicy: a.cfg.ApprovalPolicy, Approve: a.approve, Emit: func(kind string, data any) error { _, err := a.store.Append(a.session.ID, "", kind, data); return err }}
 	result, err := a.registry.Execute(a.ctx, tc, name, core.JSON(input))
 	if err != nil {
 		return err
 	}
-	a.line("%s\n", clean(result.Content))
+	text := result.Content
+	if rendered, ok := tools.RenderShellResult(name, text); ok {
+		text = rendered
+	}
+	a.line("%s\n", clean(text))
 	return nil
 }
 
@@ -561,111 +406,6 @@ func (a *App) diff() error {
 	return nil
 }
 
-func (a *App) daemon() error {
-	ctx, cancel := signalContext(a.ctx)
-	defer func() { cancel(); a.background.Wait() }()
-	a.line("dsgo schedule daemon: %s\n", a.flags.home)
-	return a.schedules.RunBatchesWithStart(ctx, a.recoverScheduled, func(deliveryCtx context.Context, batch schedule.DeliveryBatch) error {
-		return a.admitScheduleBatch(deliveryCtx, ctx, batch)
-	})
-}
-
-func (a *App) hasDelivery(id, delivery string) (bool, error) {
-	events, err := a.store.Events(id)
-	if err != nil {
-		return false, err
-	}
-	for _, ev := range events {
-		if messages, recognized, err := core.UserInputMessages(ev); recognized {
-			if err != nil {
-				return false, err
-			}
-			if messages[0].DeliveryID == delivery {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (a *App) recoverScheduled(ctx context.Context) error {
-	sessions, err := a.store.List(false)
-	if err != nil {
-		return err
-	}
-	for _, session := range sessions {
-		depth, err := a.subagentDepth(session.ID)
-		if err != nil {
-			return err
-		}
-		if depth > 0 {
-			continue
-		}
-		events, err := a.store.Events(session.ID)
-		if err != nil {
-			return err
-		}
-		latestTurn := ""
-		finished := map[string]bool{}
-		scheduleInTurn := false
-		pendingSchedule := map[string]bool{}
-		admittedInbox := map[string]bool{}
-		for _, ev := range events {
-			if ev.Type == "user/inbox" {
-				var entry struct {
-					ID      string       `json:"id"`
-					Message core.Message `json:"message"`
-				}
-				if err := json.Unmarshal(ev.Data, &entry); err != nil {
-					return err
-				}
-				if isScheduleMessage(entry.Message) {
-					pendingSchedule[entry.ID] = true
-				}
-			}
-			if ev.Type == "turn/started" {
-				latestTurn = ev.TurnID
-				scheduleInTurn = false
-			}
-			if ev.Type == "turn/finished" {
-				finished[ev.TurnID] = true
-			}
-			if messages, recognized, decodeErr := core.UserInputMessages(ev); recognized {
-				if decodeErr != nil {
-					return decodeErr
-				}
-				if ev.TurnID == latestTurn && isScheduleMessage(messages[0]) {
-					scheduleInTurn = true
-				}
-				admittedInbox[messages[0].DeliveryID] = true
-			}
-		}
-		pending := false
-		for id := range pendingSchedule {
-			if !admittedInbox["inbox:"+id] {
-				pending = true
-			}
-		}
-		if pending || latestTurn != "" && !finished[latestTurn] && scheduleInTurn {
-			id := session.ID
-			a.background.Add(1)
-			go func() {
-				defer a.background.Done()
-				var err error
-				if pending {
-					err = a.engine.ContinueInbox(ctx, id)
-				} else {
-					err = a.engine.Continue(ctx, id)
-				}
-				if err != nil && !errors.Is(err, context.Canceled) {
-					a.line("Scheduled session %s recovery stopped: %s\n", id, clean(err.Error()))
-				}
-			}()
-		}
-	}
-	return nil
-}
-
 const slashHelp = `Sessions
   /new                    Start a new session in this workspace
   /sessions [QUERY]       List sessions, or search titles and folders
@@ -675,15 +415,13 @@ const slashHelp = `Sessions
   /archive                Archive this session and start a new one
   /history                Show this session's messages
   /export FORMAT [PATH]   Export as markdown, json or jsonl
-  /status                 Show session details, mode and preset
+  /status                 Show session details and plan mode
 
 Model and behavior
   /model [NAME]           Set the model (no NAME: show settings)
   /provider [NAME]        Switch to a configured provider
   /thinking [LEVEL]       Set reasoning: off, low, high or max
   /permission [MODE]      File access: read-only, workspace-write, full-access
-  /preset [NAME]          Show or set: standard, ptc, minimal or cordis
-  /mode [MODE]            Code execution: native, ptc or ptc-repl
   /plan [off|MESSAGE]     Select plan guidance; review with exit_plan_mode
 
 Context and tasks
@@ -698,17 +436,13 @@ Files and workspace
   /cwd [PATH]             Show or change the working directory
   /files [PATH]           List a directory
   /read PATH              Show a text file with line numbers
-  /preview PATH [JSON]    Preview documents, images, sheets, HTML, PDF
   /attach PATH            Attach a file or image to your next message
   /diff                   Show uncommitted Git changes
-  /artifacts [ARGS]       Deliverables, per-turn changes, full outputs
+  /artifacts [ARGS]       Per-turn file changes and full tool outputs
 
 Background work
-  /jobs [JSON]            List background jobs, or act on one (JSON)
-  /terminal [ACTION]      User terminal panel; list, new, attach, rename, close
+  /jobs [ID|kill ID]      List background jobs, show one's output or stop it
   /agents                 List subagents and their status
-  /workflows [RUN_ID]     Show workflow runs (cancel RUN_ID stops one)
-  /schedules              List saved reminders
 
 Inspection
   /trajectory [N]         Browse turns, tool calls and timing
@@ -720,3 +454,22 @@ Inspection
 End a line with \ to continue on the next line. Ctrl+C cancels the running
 turn or clears the line being typed. Ctrl+D on an empty line exits.
 `
+
+// jobsCommand lists this session's background jobs, shows one job's retained
+// output, or stops one: /jobs, /jobs ID, /jobs kill ID.
+func (a *App) jobsCommand(args []string) error {
+	switch {
+	case len(args) == 0:
+		return a.invoke("job_list", map[string]any{})
+	case len(args) == 1:
+		text, err := a.registry.JobText(a.session.ID, args[0])
+		if err != nil {
+			return err
+		}
+		a.line("%s\n", clean(text))
+		return nil
+	case len(args) == 2 && args[0] == "kill":
+		return a.registry.StopJob(a.ctx, a.session.ID, args[1])
+	}
+	return errors.New("usage: /jobs [ID | kill ID]")
+}

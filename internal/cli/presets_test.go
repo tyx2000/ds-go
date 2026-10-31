@@ -10,7 +10,7 @@ import (
 	"dsgo/internal/core"
 )
 
-func TestPresetsAdvertiseOfficialBashOutsideMinimal(t *testing.T) {
+func TestToolsAdvertiseOfficialBash(t *testing.T) {
 	a, parent := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
 		return core.Response{}, nil
 	}))
@@ -31,7 +31,7 @@ func TestPresetsAdvertiseOfficialBashOutsideMinimal(t *testing.T) {
 			t.Fatalf("standard preset does not list %s", name)
 		}
 	}
-	for _, name := range []string{"run_shell", "jobs", "terminal", "standard_bash"} {
+	for _, name := range []string{"run_shell", "jobs", "terminal", "standard_bash", "run_code", "read_file", "workflow", "schedule_create", "present"} {
 		if _, ok := listed[name]; ok {
 			t.Fatalf("standard preset lists %s", name)
 		}
@@ -57,9 +57,8 @@ func TestPresetsAdvertiseOfficialBashOutsideMinimal(t *testing.T) {
 	if got := run("job_list", map[string]any{}); got != "(no background jobs)" {
 		t.Fatalf("job_list: %q", got)
 	}
-	// Transcripts saved before the switch still replay dsgo's earlier shell tool.
-	if got := run("run_shell", map[string]any{"command": "printf replay"}); !strings.Contains(got, "replay") {
-		t.Fatalf("run_shell replay: %q", got)
+	if _, err := a.Execute(a.ctx, tc, "run_shell", core.JSON(map[string]any{"command": "printf replay"})); err == nil {
+		t.Fatal("removed run_shell tool still runs")
 	}
 	if err := a.setPlan(parent.ID, true); err != nil {
 		t.Fatal(err)
@@ -69,21 +68,6 @@ func TestPresetsAdvertiseOfficialBashOutsideMinimal(t *testing.T) {
 	}
 	if err := a.setPlan(parent.ID, false); err != nil {
 		t.Fatal(err)
-	}
-
-	parent.Preset = "minimal"
-	if err := a.store.Update(parent); err != nil {
-		t.Fatal(err)
-	}
-	listed = specs()
-	if _, ok := listed["job_list"]; ok || strings.Contains(string(listed["bash"].InputSchema), `"description"`) {
-		t.Fatalf("minimal preset tools: %v", listed)
-	}
-	if got := run("bash", map[string]any{"command": "printf kept"}); !strings.Contains(got, "kept\n[Command finished with exit code 0]") {
-		t.Fatalf("minimal persistent bash: %q", got)
-	}
-	if _, err := a.Execute(a.ctx, tc, "job_list", core.JSON(map[string]any{})); err == nil {
-		t.Fatal("minimal preset accepted job_list")
 	}
 }
 

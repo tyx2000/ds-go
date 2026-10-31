@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"dsgo/internal/core"
-	"dsgo/internal/workflow"
 )
 
 func TestSCOR006DelegatedForkExcludesInflightTurn(t *testing.T) {
@@ -255,51 +253,5 @@ func TestSCOR006FirstTurnDelegatedForkHasEmptyPrefix(t *testing.T) {
 	request := <-requests
 	if len(request.Messages) != 1 || request.Messages[0].Content[0].Text != "standalone fork task" {
 		t.Fatalf("first-turn fork should contain only its own task; request: %+v", request.Messages)
-	}
-}
-
-func TestSCOR009WorkflowWaitsForDescendantCleanup(t *testing.T) {
-	started, cancelling, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(release) })
-	var a *App
-	a, parent := lifecycleApp(t, lifecycleModel(func(ctx context.Context, request core.Request, _ func(core.Delta)) (core.Response, error) {
-		if lifecyclePrompt(request) == "grandchild" {
-			close(started)
-			<-ctx.Done()
-			close(cancelling)
-			<-release
-			return core.Response{}, ctx.Err()
-		}
-		if _, err := a.manager.spawnContext(ctx, request.SessionID, "grandchild", "grandchild", "fresh"); err != nil {
-			return core.Response{}, err
-		}
-		<-started
-		return core.Response{Content: []core.Block{{Type: "text", Text: "done"}}}, nil
-	}))
-	done := make(chan error, 1)
-	go func() {
-		_, err := a.workflowChild(a.ctx, parent.ID, workflow.ChildRequest{Seq: 1, Prompt: "member", Label: "worker"}, func(string) {})
-		done <- err
-	}()
-	<-cancelling
-	early := false
-	select {
-	case err := <-done:
-		early = true
-		t.Errorf("workflow settled before descendant cleanup: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	releaseOnce.Do(func() { close(release) })
-	if early {
-		return
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("workflow did not settle after cleanup")
 	}
 }

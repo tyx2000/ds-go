@@ -27,11 +27,7 @@ func TestSpecialFileReadHelper(t *testing.T) {
 	} else {
 		r := New()
 		defer r.Close()
-		name, args := "read", map[string]any{"file_path": path}
-		if os.Getenv("DSGO_TEST_READ_KIND") == "legacy" {
-			name, args = "read_file", map[string]any{"path": path}
-		}
-		_, err = r.Execute(ctx, core.ToolContext{SessionID: "fifo", CWD: filepath.Dir(path), Permission: "read-only"}, name, core.JSON(args))
+		_, err = r.Execute(ctx, core.ToolContext{SessionID: "fifo", CWD: filepath.Dir(path), Permission: "read-only"}, "read", core.JSON(map[string]any{"file_path": path}))
 	}
 	if err == nil {
 		t.Fatal("special file accepted")
@@ -43,7 +39,7 @@ func TestNonregularReadsDoNotWaitForFIFO(t *testing.T) {
 	if err := syscall.Mkfifo(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"official", "legacy", "version"} {
+	for _, kind := range []string{"official", "version"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()

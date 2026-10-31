@@ -11,7 +11,6 @@ import (
 
 	"dsgo/internal/agent"
 	"dsgo/internal/core"
-	"dsgo/internal/schedule"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
 )
@@ -34,7 +33,6 @@ func goalFixture(t *testing.T, model core.Model) *App {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{store: store, session: session, ctx: ctx, cancel: cancel, out: io.Discard, err: io.Discard, cfg: state.DefaultConfig(), unattended: true, registry: tools.New()}
 	a.current.Store(session.ID)
-	a.schedules, _ = schedule.Open(store.Root())
 	a.manager = newAgents(a)
 	a.engine = agent.New(store, model, a, agent.Options{Model: "fixture", CommitPreparedInput: a.commitGoalInput, BeforeModel: a.beforeGoalModel})
 	a.engine.Notify = a.notice

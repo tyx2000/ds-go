@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -100,48 +99,5 @@ func TestManagedBackgroundShellKeepsStartSnapshot(t *testing.T) {
 	got := j.standard.stdout.value()["text"]
 	if got != want {
 		t.Fatalf("background identity %q want %q", got, want)
-	}
-}
-
-func TestManagedPersistentBashIdentityAndCWDStayPerOwner(t *testing.T) {
-	root := t.TempDir()
-	nested := filepath.Join(root, "nested")
-	if err := os.Mkdir(nested, 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DSH_HOME", "stale")
-	t.Setenv("DSH_STALE_PARENT", "stale")
-	r := New()
-	defer r.Close()
-	tc := core.ToolContext{SessionID: "owner-a", CWD: root, WorkspaceRoot: root, Permission: "full-access", HarnessHome: "not-a-terminal-fact", ProfileName: "web", ProfileDir: "not-a-terminal-fact"}
-	run := func(command string) string {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		result, err := r.Execute(ctx, tc, "bash", core.JSON(map[string]any{"command": command}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return result.Content
-	}
-	command := `printf '%s|%s|%s|%s|%s|%s' "$DSH_SHELL" "$DSH_SESSION_ID" "$DSH_PTY_SESSION_ID" "${DSH_HOME-unset}" "${DSH_PROFILE-unset}" "${DSH_STALE_PARENT-unset}"`
-	if got := run(command); !strings.Contains(got, "1|owner-a|pty-1|unset|unset|unset") {
-		t.Fatalf("persistent initial facts: %q", got)
-	}
-	run("export KEEP=one; cd nested")
-	if got := run(`printf '%s|%s' "$KEEP" "${PWD##*/}"`); !strings.Contains(got, "one|nested") {
-		t.Fatalf("persistent cwd/env lost: %q", got)
-	}
-	tc.SessionID = "owner-b"
-	if got := run(command); !strings.Contains(got, "1|owner-b|pty-2|unset|unset|unset") {
-		t.Fatalf("persistent cross-owner facts: %q", got)
-	}
-	if got := run(`printf '%s|%s' "${KEEP-unset}" "${PWD##*/}"`); strings.Contains(got, "one|nested") {
-		t.Fatalf("cross-owner state leak: %q", got)
-	}
-	tc.SessionID = "owner-a"
-	r.InvalidateSession(tc.SessionID)
-	if got := run(command); !strings.Contains(got, "1|owner-a|pty-3|unset|unset|unset") {
-		t.Fatalf("terminal id reused after reset: %q", got)
 	}
 }

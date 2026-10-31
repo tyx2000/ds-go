@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -339,31 +338,6 @@ func (s *standardBashState) consume() string {
 	return body
 }
 
-// legacySnapshot keeps the original jobs/`/jobs` view working for official
-// bash jobs: the combined write-order output plus the official job facts.
-func (s *standardBashState) legacySnapshot(j *job, offset int, consume bool) map[string]any {
-	m := j.legacyView(offset, consume)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m["kind"] = "bash"
-	m["description"] = s.description
-	m["cwd"] = s.cwd
-	m["job_status"] = s.status
-	if s.detail != "" {
-		m["detail"] = s.detail
-	}
-	if s.signal != "" {
-		m["signal"] = s.signal
-	}
-	if s.stopped != "" {
-		m["stopped"] = s.stopped
-	}
-	if sandbox, ok := m["sandbox"].(map[string]any); ok {
-		sandbox["denied"] = s.denied
-	}
-	return m
-}
-
 func (s *standardBashState) foregroundValue(timeoutMS int) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -567,15 +541,14 @@ func (r *Registry) startStandardBash(tc core.ToolContext, a standardBashArgs, mo
 		return nil, err
 	}
 	st := &standardBashState{description: a.Description, cwd: tc.CWD, mode: mode, backend: sc.backend, status: "running", stdout: &streamCapture{dir: dir}, stderr: &streamCapture{dir: dir}}
-	combined := &boundedBuffer{limit: maxOutputBytes}
-	sc.cmd.Stdout = io.MultiWriter(st.stdout, combined)
-	sc.cmd.Stderr = io.MultiWriter(st.stderr, combined)
+	sc.cmd.Stdout = st.stdout
+	sc.cmd.Stderr = st.stderr
 	if err := sc.cmd.Start(); err != nil {
 		cancel()
 		sc.cleanup()
 		return nil, fmt.Errorf("bash start failed: %w", err)
 	}
-	j := &job{standard: st, id: "bash-" + newID()[:16], owner: tc.SessionID, command: a.Command, cancel: cancel, done: make(chan struct{}), noticed: make(chan struct{}), output: combined, started: time.Now(), backend: sc.backend, mode: mode, pid: sc.cmd.Process.Pid}
+	j := &job{standard: st, id: "bash-" + newID()[:16], owner: tc.SessionID, command: a.Command, cancel: cancel, done: make(chan struct{}), noticed: make(chan struct{}), started: time.Now(), backend: sc.backend, mode: mode, pid: sc.cmd.Process.Pid}
 	if foreground {
 		j.waiters = 1
 	}
@@ -732,13 +705,10 @@ type publicJob struct {
 func (j *job) public() publicJob {
 	j.mu.Lock()
 	p := publicJob{ID: j.id, Kind: "shell", Label: j.command, StartedAt: j.started.UnixMilli()}
-	finished, exitCode, errText, terminal := j.finished, j.exitCode, j.err, j.terminal != nil
+	finished, exitCode, errText := j.finished, j.exitCode, j.err
 	j.mu.Unlock()
 	if !finished.IsZero() {
 		p.FinishedAt = finished.UnixMilli()
-	}
-	if terminal {
-		p.Kind = "pty"
 	}
 	switch {
 	case j.standard != nil:
@@ -757,11 +727,7 @@ func (j *job) public() publicJob {
 }
 
 func (j *job) modelRead() string {
-	if j.standard != nil {
-		return j.standard.consume()
-	}
-	text, _ := j.legacyView(0, true)["output"].(string)
-	return text
+	return j.standard.consume()
 }
 
 func (r *Registry) ownedJob(tc core.ToolContext, id string) (*job, error) {
@@ -833,6 +799,32 @@ func (r *Registry) jobList(_ context.Context, tc core.ToolContext, raw json.RawM
 		return out[i].ID < out[k].ID
 	})
 	return result(out), nil
+}
+
+// StopJob is a user's stop through /jobs. Unlike the model's own job_kill,
+// its completion notice still reaches the owning session.
+func (r *Registry) StopJob(ctx context.Context, owner, id string) error {
+	j, err := r.ownedJob(core.ToolContext{SessionID: owner}, id)
+	if err != nil {
+		return err
+	}
+	j.requestKill("killed through jobs")
+	select {
+	case <-j.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// JobText shows a job's retained output to the user without advancing the
+// model's job_output read position.
+func (r *Registry) JobText(owner, id string) (string, error) {
+	j, err := r.ownedJob(core.ToolContext{SessionID: owner}, id)
+	if err != nil {
+		return "", err
+	}
+	return joinStreams(j.standard.stdout.text(), j.standard.stderr.text()), nil
 }
 
 func (r *Registry) jobKill(_ context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {

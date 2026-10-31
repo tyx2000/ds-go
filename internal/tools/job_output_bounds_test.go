@@ -80,9 +80,12 @@ func TestJobCompletionSummaryUsesIndependentUTF16Limit(t *testing.T) {
 func TestJobOutputLimitIsOwnedAndCanonicalValueStaysFull(t *testing.T) {
 	r := New()
 	defer r.Close()
-	j := &job{id: "limited", owner: "owner", outputLimitBytes: 64, output: &boundedBuffer{limit: 1000}, started: time.Now(), done: make(chan struct{}), cancel: func() {}}
+	st := &standardBashState{status: "completed", stdout: &streamCapture{}, stderr: &streamCapture{}}
+	_, _ = st.stdout.Write([]byte(strings.Repeat("full canonical ", 40)))
+	st.stdout.close()
+	st.stderr.close()
+	j := &job{standard: st, id: "limited", owner: "owner", outputLimitBytes: 64, started: time.Now(), finished: time.Now(), done: make(chan struct{}), cancel: func() {}}
 	close(j.done)
-	_, _ = j.output.Write([]byte(strings.Repeat("full canonical ", 40)))
 	r.jobs[j.id] = j
 	if limit, ok := r.JobOutputLimit("owner", j.id); !ok || limit != 64 {
 		t.Fatalf("owner limit: %d %v", limit, ok)

@@ -48,7 +48,7 @@ func TestCLIConversationToolResumeAndJSON(t *testing.T) {
 		}
 		switch requests {
 		case 1:
-			return jsonReply(`{"id":"m1","type":"message","content":[{"type":"tool_use","id":"call1","name":"read_file","input":{"path":"hello.txt"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":4}}`), nil
+			return jsonReply(`{"id":"m1","type":"message","content":[{"type":"tool_use","id":"call1","name":"read","input":{"file_path":"hello.txt"}}],"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":4}}`), nil
 		case 2:
 			b, _ := json.Marshal(body["messages"])
 			if !bytes.Contains(b, []byte("workspace fixture")) {

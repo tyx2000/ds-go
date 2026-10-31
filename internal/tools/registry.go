@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"sync"
 
 	"dsgo/internal/core"
@@ -19,7 +18,6 @@ import (
 )
 
 type Handler func(context.Context, core.ToolContext, json.RawMessage) (core.ToolResult, error)
-type Dispatcher func(context.Context, core.ToolContext, string, json.RawMessage) (core.ToolResult, error)
 type definition struct {
 	spec                   core.ToolSpec
 	run                    Handler
@@ -40,14 +38,8 @@ type Registry struct {
 	definitions    map[string]definition
 	groups         map[string]map[string]bool
 	jobs           map[string]*job
-	environments   map[string]*nodeEnvironment
-	shells         map[string]*bashEnvironment
-	nextManagedPTY uint64 // model persistent-terminal IDs, under mu; never Host user terminals
 	observations   map[string]map[string]fileObservation
 	spillDir       string
-	nodePath       string
-	ptcMode        string
-	dispatcher     Dispatcher
 	notifier       func(JobNotice)
 	closed         bool
 	jobWaitDefault float64
@@ -55,7 +47,7 @@ type Registry struct {
 }
 
 func New() *Registry {
-	r := &Registry{definitions: make(map[string]definition), groups: make(map[string]map[string]bool), jobs: make(map[string]*job), environments: make(map[string]*nodeEnvironment), shells: make(map[string]*bashEnvironment), observations: make(map[string]map[string]fileObservation), ptcMode: "per-call"}
+	r := &Registry{definitions: make(map[string]definition), groups: make(map[string]map[string]bool), jobs: make(map[string]*job), observations: make(map[string]map[string]fileObservation)}
 	r.builtins()
 	r.officialFiles()
 	r.standardShell()
@@ -140,35 +132,11 @@ func (r *Registry) Specs() []core.ToolSpec {
 	out := make([]core.ToolSpec, 0, len(r.definitions))
 	for _, d := range r.definitions {
 		s := d.spec
-		if s.Name == "run_code" && r.ptcMode == "persistent-in-memory" {
-			s.Description = "Execute erasable TypeScript in this session's retained Node REPL. Top-level await and a final JSON expression are supported; top-level return is not. Reuse declarations without redeclaring let/const/class. Await tools.<name>(args); calls use the same approval pipeline. Cancellation, timeout, permission changes and process exit clear memory. Defaults: timeout_ms=120000, maximum=600000, 512 MiB V8 heap, 1 MiB output."
-		}
 		s.InputSchema = bytes.Clone(s.InputSchema)
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
-}
-
-// PTCInstructions supplies the generated SDK contract when the model sees only run_code.
-func (r *Registry) PTCInstructions() string {
-	r.mu.RLock()
-	mode := r.ptcMode
-	r.mu.RUnlock()
-	var b strings.Builder
-	if mode == "persistent-in-memory" {
-		b.WriteString("run_code executes erasable TypeScript in a per-session Node REPL. Use top-level await and a final JSON expression. Do not use top-level return. Top-level declarations persist; redeclaring let/const/class follows Node REPL rules. Memory is cleared on cancellation, timeout, permission change, fork, process exit, or session close. Await every tool call.\n")
-	} else {
-		b.WriteString("run_code executes an erasable TypeScript async function body in a fresh Node process. Top-level await and return are supported. No memory is retained. Await every tool call.\n")
-	}
-	b.WriteString("Available tools bindings (all return Promise<JSON>; errors reject; each call uses normal approval and audit):\n")
-	for _, s := range r.Specs() {
-		if s.Name == "run_code" {
-			continue
-		}
-		fmt.Fprintf(&b, "tools[%q](args) // %s\nArguments JSON schema: %s\n", s.Name, s.Description, s.InputSchema)
-	}
-	return b.String()
 }
 
 func (r *Registry) Execute(ctx context.Context, tc core.ToolContext, name string, input json.RawMessage) (core.ToolResult, error) {
@@ -193,31 +161,6 @@ func (r *Registry) Execute(ctx context.Context, tc core.ToolContext, name string
 	return d.run(ctx, tc, bytes.Clone(input))
 }
 
-// SetDispatcher routes PTC bindings through the application's outer policy boundary.
-// The supplied dispatcher should eventually call Execute; Execute itself never invokes it.
-func (r *Registry) SetDispatcher(dispatch Dispatcher) {
-	r.mu.Lock()
-	r.dispatcher = dispatch
-	r.mu.Unlock()
-}
-func (r *Registry) dispatch(ctx context.Context, tc core.ToolContext, name string, input json.RawMessage) (core.ToolResult, error) {
-	tc.Nested = true
-	if err := ctx.Err(); err != nil {
-		return core.ToolResult{}, err
-	}
-	r.mu.RLock()
-	dispatch := r.dispatcher
-	closed := r.closed
-	r.mu.RUnlock()
-	if closed {
-		return core.ToolResult{}, errors.New("tool registry closed")
-	}
-	if dispatch != nil {
-		return dispatch(ctx, tc, name, input)
-	}
-	return r.Execute(ctx, tc, name, input)
-}
-
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	r.closed = true
@@ -225,21 +168,7 @@ func (r *Registry) Close() error {
 	for _, j := range r.jobs {
 		jobs = append(jobs, j)
 	}
-	envs := make([]*nodeEnvironment, 0, len(r.environments))
-	for _, e := range r.environments {
-		envs = append(envs, e)
-	}
-	shells := make([]*bashEnvironment, 0, len(r.shells))
-	for _, sh := range r.shells {
-		shells = append(shells, sh)
-	}
 	r.mu.Unlock()
-	for _, sh := range shells {
-		sh.stop()
-	}
-	for _, e := range envs {
-		e.stop()
-	}
 	for _, j := range jobs {
 		j.cancel()
 	}
@@ -249,67 +178,10 @@ func (r *Registry) Close() error {
 	return nil
 }
 
-// SetNodePath selects the Node executable used by both PTC modes. Empty means PATH.
-// Live persistent environments are invalidated before returning.
-func (r *Registry) SetNodePath(path string) {
-	r.mu.Lock()
-	r.nodePath = path
-	envs := r.takeEnvironmentsLocked()
-	r.mu.Unlock()
-	for _, e := range envs {
-		e.stop()
-	}
-}
-
-func (r *Registry) SetPTCMode(mode string) error {
-	if mode != "per-call" && mode != "persistent-in-memory" {
-		return errors.New("PTC runtime mode must be per-call or persistent-in-memory")
-	}
-	r.mu.Lock()
-	r.ptcMode = mode
-	envs := r.takeEnvironmentsLocked()
-	r.mu.Unlock()
-	for _, e := range envs {
-		e.stop()
-	}
-	return nil
-}
-
-func (r *Registry) takeEnvironmentsLocked() []*nodeEnvironment {
-	out := make([]*nodeEnvironment, 0, len(r.environments))
-	for _, e := range r.environments {
-		out = append(out, e)
-	}
-	r.environments = make(map[string]*nodeEnvironment)
-	return out
-}
-
-// InvalidateSession must be called when a session's standing permission changes or closes.
-// It cancels current evaluation and releases retained Node memory before returning.
-func (r *Registry) InvalidateSession(sessionID string) {
-	r.mu.Lock()
-	e := r.environments[sessionID]
-	delete(r.environments, sessionID)
-	sh := r.shells[sessionID]
-	delete(r.shells, sessionID)
-	r.mu.Unlock()
-	if sh != nil {
-		sh.stop()
-	}
-	if e != nil {
-		e.stop()
-	}
-}
-
-func (r *Registry) nodeExecutable() (string, error) {
-	r.mu.RLock()
-	path := r.nodePath
-	r.mu.RUnlock()
-	if path == "" {
-		path = "node"
-	}
-	return execLookPath(path)
-}
+// InvalidateSession must be called when a session's standing permission
+// changes or closes. Each bash call starts a fresh shell, so no per-session
+// process state is retained.
+func (r *Registry) InvalidateSession(sessionID string) {}
 
 func decode(input json.RawMessage, v any) error {
 	d := json.NewDecoder(bytes.NewReader(input))

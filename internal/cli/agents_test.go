@@ -12,7 +12,6 @@ import (
 
 	"dsgo/internal/agent"
 	"dsgo/internal/core"
-	"dsgo/internal/schedule"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
 )
@@ -40,13 +39,8 @@ func lifecycleApp(t *testing.T, model core.Model) (*App, core.Session) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &App{ctx: ctx, cancel: cancel, store: store, cfg: state.DefaultConfig(), out: io.Discard, err: io.Discard, registry: tools.New()}
 	a.current.Store(parent.ID)
-	a.schedules, err = schedule.Open(store.Root())
-	if err != nil {
-		t.Fatal(err)
-	}
 	a.engine = agent.New(store, model, a, agent.Options{Model: "fixture-model"})
 	a.manager = newAgents(a)
-	a.registry.SetDispatcher(a.Execute)
 	if err = a.registerTools(); err != nil {
 		t.Fatal(err)
 	}
@@ -190,9 +184,6 @@ func TestSubagentCancellationReachesDescendantsAndPreservesOwnership(t *testing.
 	if _, err = a.agentMessage(a.ctx, core.ToolContext{SessionID: other.ID}, core.JSON(map[string]string{"id": childID, "message": "unauthorized"})); err == nil {
 		t.Fatal("another session sent a message to an unowned agent")
 	}
-	if _, err = a.waitAgent(a.ctx, core.ToolContext{SessionID: other.ID}, core.JSON(map[string]string{"id": childID})); err == nil {
-		t.Fatal("another session observed an unowned agent")
-	}
 	a.manager.mu.Lock()
 	childDone, grandDone := a.manager.children[childID].done, a.manager.children[grandID].done
 	a.manager.mu.Unlock()
@@ -286,7 +277,7 @@ func TestSubagentAuditFailurePreventsModelDispatch(t *testing.T) {
 		called.Add(1)
 		return core.Response{Content: []core.Block{{Type: "text", Text: "unexpected"}}}, nil
 	}))
-	_, err := a.Execute(a.ctx, core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, Emit: func(string, any) error { return errors.New("disk full") }}, "spawn_agent", core.JSON(map[string]string{"prompt": "work"}))
+	_, err := a.Execute(a.ctx, core.ToolContext{SessionID: parent.ID, CWD: parent.CWD, Emit: func(string, any) error { return errors.New("disk full") }}, "subagent", core.JSON(map[string]string{"description": "Work", "prompt": "work"}))
 	if err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("got %v", err)
 	}

@@ -68,34 +68,6 @@ func TestSpillRecoveryOwnerIntegrityAndUTF8(t *testing.T) {
 	}
 }
 
-func TestPresentPathsAreSourceReferencesAndRejectFinalSymlinks(t *testing.T) {
-	cwd, outside := t.TempDir(), t.TempDir()
-	p := filepath.Join(outside, "report.txt")
-	putFile(t, p, "first")
-	resolved, err := ResolvePresented(context.Background(), cwd, []PresentedFile{{Path: p, Description: "report"}})
-	canonical, canonicalErr := filepath.EvalSymlinks(p)
-	if err != nil || canonicalErr != nil || resolved[0].Path != canonical {
-		t.Fatalf("absolute source: %v %v", resolved, err)
-	}
-	putFile(t, p, "second")
-	b, err := os.ReadFile(resolved[0].Path)
-	if err != nil || string(b) != "second" {
-		t.Fatal("delivery copied obsolete bytes")
-	}
-	link := filepath.Join(cwd, "link.txt")
-	if err = os.Symlink(p, link); err != nil {
-		t.Fatal(err)
-	}
-	for _, bad := range []string{link, cwd, filepath.Join(cwd, "missing"), " "} {
-		if _, err = ResolvePresented(context.Background(), cwd, []PresentedFile{{Path: bad}}); err == nil {
-			t.Fatalf("accepted %q", bad)
-		}
-	}
-	if _, err = ResolvePresented(context.Background(), cwd, nil); err == nil {
-		t.Fatal("accepted empty delivery")
-	}
-}
-
 func TestWorkspaceSnapshotCapturesNewStagedDeletedAndSymlinkWithoutGitMutation(t *testing.T) {
 	s := testStore(t)
 	cwd := t.TempDir()

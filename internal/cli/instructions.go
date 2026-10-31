@@ -12,8 +12,7 @@ import (
 	"dsgo/internal/core"
 )
 
-// The standard, ptc and cordis presets carry the official agent-instructions
-// baseline (packages/context/agent-instructions): the user-global and project
+// Sessions carry the official agent-instructions baseline (packages/context/agent-instructions): the user-global and project
 // AGENTS.md chain is rendered into a durable user message before a request.
 // A visible baseline is reusable only for the same working directory. Surface
 // replacement (including compaction) must not make the process cache authoritative.
@@ -30,9 +29,6 @@ type baselineSource struct {
 }
 
 func (a *App) ensureInstructionBaseline(ctx context.Context, s core.Session, turn string) error {
-	if sessionPreset(s) == "minimal" {
-		return nil
-	}
 	b := &a.instructionState
 	b.mu.Lock()
 	defer b.mu.Unlock()

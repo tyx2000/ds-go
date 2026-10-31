@@ -73,7 +73,7 @@ func TestTimeContextReadingsFollowOfficialFormatAndRefresh(t *testing.T) {
 	}
 }
 
-func TestTimeContextEveryStepWithZeroIntervalAndSkipsMinimal(t *testing.T) {
+func TestTimeContextEveryStepWithZeroInterval(t *testing.T) {
 	a, s, advance := timeContextApp(t, 0)
 	_, _ = a.store.Append(s.ID, "turn1", "turn/started", nil)
 	_ = a.prepareStep(a.ctx, s, "turn1", 1)
@@ -82,11 +82,6 @@ func TestTimeContextEveryStepWithZeroIntervalAndSkipsMinimal(t *testing.T) {
 	got := timeReadings(t, a, s.ID)
 	if len(got) != 2 || !strings.HasSuffix(got[1], "Elapsed since the preceding step context: 1d 2h 4s.") {
 		t.Fatalf("every-step readings: %q", got)
-	}
-	s.Preset = "minimal"
-	_ = a.prepareStep(a.ctx, s, "turn1", 3)
-	if got = timeReadings(t, a, s.ID); len(got) != 2 {
-		t.Fatalf("minimal preset received a reading: %q", got)
 	}
 }
 

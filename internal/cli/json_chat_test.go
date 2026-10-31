@@ -19,7 +19,7 @@ func TestJSONChatResumeAndSlashOutputIsNDJSON(t *testing.T) {
 	var output, errors bytes.Buffer
 	a.out, a.err = &output, &errors
 	a.flags.json, a.flags.resume, a.session = true, s.ID, s
-	a.in = bufio.NewReader(strings.NewReader("/help\n/history\n/sessions\n/mode\n/export markdown\n/quit\n"))
+	a.in = bufio.NewReader(strings.NewReader("/help\n/history\n/sessions\n/cwd\n/export markdown\n/quit\n"))
 	if _, err := a.store.Append(s.ID, "turn1", "user/message", core.TextMessage("user", "A historical line\nand another line.")); err != nil {
 		t.Fatal(err)
 	}

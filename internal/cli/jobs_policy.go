@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 
 	"dsgo/internal/agent"
 	"dsgo/internal/core"
+	"dsgo/internal/tools"
 )
 
 type jobWakeCount struct {
@@ -109,4 +111,16 @@ func (a *App) deliverJobCompletion(owner string, message core.Message) (string, 
 		return a.engine.Inbox(a.ctx, owner, message)
 	}
 	return manager.deliver(a.ctx, owner, message, true)
+}
+
+// deliverJobNotice hands an owned job's completion notice to its Session:
+// a busy owner admits it at its next step, an idle one is woken.
+func (a *App) deliverJobNotice(n tools.JobNotice) {
+	if a.manager == nil {
+		return
+	}
+	message := core.Message{Role: "user", Content: []core.Block{{Type: "text", Text: n.Text}}, Source: map[string]any{"kind": "tool-jobs", "form": "notice", "summary": n.Summary}}
+	if _, err := a.deliverJobCompletion(n.Owner, message); err != nil && !errors.Is(err, errManagerClosing) && a.ctx.Err() == nil {
+		a.line("[job notice for %s could not be delivered: %s]\n", n.Owner, clean(err.Error()))
+	}
 }

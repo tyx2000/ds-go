@@ -18,10 +18,6 @@ func TestSystemForUsesOrderedPresetInActualRequestAndPreservesSkills(t *testing.
 		sent = req.System
 		return core.Response{Content: []core.Block{{Type: "text", Text: "Done."}}}, nil
 	}))
-	s.Preset, s.ExecutionMode = "standard", "native"
-	if err := a.store.Update(s); err != nil {
-		t.Fatal(err)
-	}
 	skillDir := filepath.Join(s.CWD, ".agents", "skills", "catalog-fixture")
 	if err := os.MkdirAll(skillDir, 0700); err != nil {
 		t.Fatal(err)
@@ -48,16 +44,5 @@ func TestSystemForUsesOrderedPresetInActualRequestAndPreservesSkills(t *testing.
 	}
 	if strings.Contains(sent, "must explicitly approve via /plan off") {
 		t.Fatal("obsolete plan approval policy reached the model")
-	}
-}
-
-func TestSystemForMinimalDoesNotReceiveStandardPolicy(t *testing.T) {
-	a, s := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
-		return core.Response{}, nil
-	}))
-	s.Preset = "minimal"
-	got, err := a.systemFor(s)
-	if err != nil || got != "You are a helpful software engineer assistant." {
-		t.Fatalf("minimal system: %q, %v", got, err)
 	}
 }

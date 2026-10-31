@@ -3,7 +3,6 @@
 package artifacts
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -250,55 +248,4 @@ func (s *Store) Retain(session, turn, tool, text string, maxBytes int) (string, 
 		start++
 	}
 	return text[:head] + "\n\n[...]\n\n" + text[start:] + notice, &ref, nil
-}
-
-type PresentedFile struct {
-	Path        string `json:"path"`
-	Description string `json:"description,omitempty"`
-}
-
-// ResolvePresented performs metadata checks without copying or reading contents.
-func ResolvePresented(ctx context.Context, cwd string, files []PresentedFile) ([]PresentedFile, error) {
-	if len(files) < 1 || len(files) > 8 {
-		return nil, errors.New("present accepts 1 to 8 files")
-	}
-	out := make([]PresentedFile, 0, len(files))
-	for _, file := range files {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if strings.TrimSpace(file.Path) == "" {
-			return nil, errors.New("present requires a non-empty file path")
-		}
-		p := file.Path
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(cwd, p)
-		}
-		p, err := filepath.Abs(p)
-		if err != nil {
-			return nil, err
-		}
-		st, err := os.Lstat(p)
-		if err != nil {
-			return nil, fmt.Errorf("cannot present %s: %w", file.Path, err)
-		}
-		if !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("cannot present %s: not a regular file", file.Path)
-		}
-		// Canonicalize parents while preserving the final no-symlink check.
-		parent, err := filepath.EvalSymlinks(filepath.Dir(p))
-		if err != nil {
-			return nil, err
-		}
-		file.Path = filepath.Join(parent, filepath.Base(p))
-		st, err = os.Lstat(file.Path)
-		if err != nil {
-			return nil, err
-		}
-		if !st.Mode().IsRegular() {
-			return nil, errors.New("present source changed during validation")
-		}
-		out = append(out, file)
-	}
-	return out, nil
 }

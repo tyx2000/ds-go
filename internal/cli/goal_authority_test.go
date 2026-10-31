@@ -75,18 +75,6 @@ func TestGoalResidentDelegatedChildCannotGainHumanAuthorityBySelection(t *testin
 	runGoalHumanAuthority(t, a, session.ID, false)
 }
 
-func TestGoalOwnedWorkflowMemberHasNoDirectHumanAuthority(t *testing.T) {
-	a := goalFixture(t, goalAuthorityModel(t, false))
-	session, err := a.store.CreateChild(a.session.CWD, "workflow member", a.session.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release := a.ownGoalActivation(session.ID, a.session.ID)
-	defer release()
-	a.current.Store(session.ID)
-	runGoalHumanAuthority(t, a, session.ID, false)
-}
-
 func TestGoalManualForkWithDelegatedLineageIsIndependentRuntimeRoot(t *testing.T) {
 	a := goalFixture(t, goalAuthorityModel(t, true))
 	childSession, err := a.store.CreateChild(a.session.CWD, "historical delegated child", a.session.ID)

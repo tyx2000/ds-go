@@ -235,18 +235,6 @@ func (e *Engine) compactionRequest(ctx context.Context, id string, events []core
 	} else if e.Tools != nil {
 		request.Tools = e.Tools.Specs()
 	}
-	mode := session.ExecutionMode
-	if mode == "" {
-		mode = opts.ExecutionMode
-	}
-	if mode == "ptc" || mode == "ptc-repl" || (mode == "" && session.Preset == "ptc") {
-		tools := []core.ToolSpec{}
-		for _, tool := range request.Tools {
-			if tool.Name == "run_code" {
-				tools = append(tools, tool)
-			}
-		}
-		request.Tools = tools
-	}
+
 	return request, ctx.Err()
 }

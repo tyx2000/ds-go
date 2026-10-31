@@ -39,7 +39,6 @@ type subagentStart struct {
 	Prompt, Description, Mode, CWD   string
 	Provider, Model, ReasoningEffort *string
 	MaxDepth                         int
-	AgentPreset                      *string
 }
 type subagentCatalogEntry struct {
 	Kind   string `json:"kind"`
@@ -193,9 +192,9 @@ func (a *App) subagentSpecFor(session core.Session, fork bool) core.ToolSpec {
 		policy, err := a.subagentPolicy(session.ID)
 		enabled = err == nil && policy != nil
 	}
-	return delegationSpec(fork, enabled, a.cfg.SubagentAllowedAgentPresets...)
+	return delegationSpec(fork, enabled)
 }
-func delegationSpec(fork, selection bool, allowedPresets ...string) core.ToolSpec {
+func delegationSpec(fork, selection bool) core.ToolSpec {
 	name, desc, prompt := "subagent", "Delegate a self-contained task in a separate fresh context. The child does not share this conversation. Start returns its id immediately; completion and messages are delivered independently.", "Complete self-contained task, including all needed context."
 	if fork {
 		name, desc, prompt = "subagent_fork", "Delegate work to a child seeded with completed turns of this conversation. The current in-flight turn is excluded. Start returns its id immediately; completion and messages are delivered independently.", "The task; the child already sees completed turns, so state what is new."
@@ -207,15 +206,12 @@ func delegationSpec(fork, selection bool, allowedPresets ...string) core.ToolSpe
 		properties["model"] = map[string]any{"type": "string"}
 		properties["reasoning_effort"] = map[string]any{"type": "string"}
 	}
-	if !fork && len(allowedPresets) > 0 {
-		properties["agent_preset"] = map[string]any{"type": "string", "enum": allowedPresets, "description": "Independent child preset; omission uses the configured default or the parent's current preset."}
-	}
 	return core.ToolSpec{Name: name, Description: desc, InputSchema: core.JSON(map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": []string{"description", "prompt"}})}
 }
 func (a *App) registerSubagentTools() error {
 	for _, fork := range []bool{false, true} {
 		isFork := fork
-		if err := a.registry.Register(delegationSpec(isFork, !isFork, a.cfg.SubagentAllowedAgentPresets...), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
+		if err := a.registry.Register(delegationSpec(isFork, !isFork), func(ctx context.Context, tc core.ToolContext, raw json.RawMessage) (core.ToolResult, error) {
 			return a.delegateOfficial(ctx, tc, raw, isFork)
 		}); err != nil {
 			return err
@@ -237,7 +233,6 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 		Provider    *string `json:"provider"`
 		Model       *string `json:"model"`
 		Effort      *string `json:"reasoning_effort"`
-		AgentPreset *string `json:"agent_preset"`
 	}
 	if err := decodeOfficialObject(raw, &p); err != nil {
 		return core.ToolResult{}, err
@@ -247,7 +242,7 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 	}
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &fields)
-	for _, name := range []string{"cwd", "provider", "model", "reasoning_effort", "agent_preset"} {
+	for _, name := range []string{"cwd", "provider", "model", "reasoning_effort"} {
 		if v, ok := fields[name]; ok && string(v) == "null" {
 			return core.ToolResult{}, fmt.Errorf("%s must be a string", name)
 		}
@@ -268,24 +263,6 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 	}
 	if fork && (p.Provider != nil || p.Model != nil || p.Effort != nil) {
 		return core.ToolResult{}, errors.New("subagent_fork does not expose child LLM selection")
-	}
-	var preset *string
-	if !fork && a.cfg.SubagentAgentPreset != "" {
-		selected := a.cfg.SubagentAgentPreset
-		preset = &selected
-	}
-	if p.AgentPreset != nil {
-		if fork {
-			return core.ToolResult{}, errors.New("subagent_fork does not support agent_preset")
-		}
-		allowed := false
-		for _, id := range a.cfg.SubagentAllowedAgentPresets {
-			allowed = allowed || id == *p.AgentPreset
-		}
-		if !allowed {
-			return core.ToolResult{}, errors.New("agent_preset is not in the configured child preset allowlist")
-		}
-		preset = p.AgentPreset
 	}
 	if p.Provider != nil || p.Effort != nil {
 		policy, err := a.subagentPolicy(tc.SessionID)
@@ -326,7 +303,7 @@ func (a *App) delegateOfficial(ctx context.Context, tc core.ToolContext, raw jso
 			return core.ToolResult{}, errors.New("reasoning_effort must be non-empty")
 		}
 	}
-	req := subagentStart{Prompt: *p.Prompt, Description: *p.Description, Mode: "fresh", Provider: p.Provider, Model: p.Model, ReasoningEffort: p.Effort, MaxDepth: maxDepth, AgentPreset: preset}
+	req := subagentStart{Prompt: *p.Prompt, Description: *p.Description, Mode: "fresh", Provider: p.Provider, Model: p.Model, ReasoningEffort: p.Effort, MaxDepth: maxDepth}
 	if p.CWD != nil {
 		req.CWD = *p.CWD
 	}
@@ -558,23 +535,8 @@ func (m *agents) spawnOfficial(ctx context.Context, tc core.ToolContext, req sub
 		if req.ReasoningEffort != nil {
 			s.Thinking = *req.ReasoningEffort
 		}
-		if req.AgentPreset != nil {
-			if req.Mode == "fork" || !validChildPreset(*req.AgentPreset) {
-				return errors.New("unsupported independent child preset")
-			}
-			s.Preset = *req.AgentPreset
-			s.ExecutionMode = "native"
-			if s.Preset == "ptc" {
-				s.ExecutionMode = "ptc"
-			}
-		}
 		if err = m.app.store.Update(s); err != nil {
 			return err
-		}
-		if req.AgentPreset != nil {
-			if _, err = m.app.store.Append(id, "", "agent-preset/selected", map[string]any{"agentPreset": *req.AgentPreset}); err != nil {
-				return err
-			}
 		}
 		if err = m.app.inheritSubagentPolicy(tc.SessionID, id); err != nil {
 			return err
@@ -851,7 +813,7 @@ func (m *agents) settle(ctx context.Context, parent string) error {
 		}
 		m.mu.Unlock()
 		for _, owner := range owners {
-			busy = busy || m.app.registry.HasPendingSessionJobs(owner) || m.app.workflowNotices.busyOwner(owner)
+			busy = busy || m.app.registry.HasPendingSessionJobs(owner)
 		}
 		if !busy && !m.app.engine.Busy(parent) {
 			return nil

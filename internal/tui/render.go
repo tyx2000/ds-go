@@ -127,18 +127,6 @@ func inspectRecord(r Record, tab string, revealed map[string]bool) []string {
 	case "input":
 		out = append(out, "Input")
 		out = append(out, prettyLines(r.Input)...)
-	case "code":
-		var p struct {
-			Code string `json:"code"`
-		}
-		if r.Name == "run_code" && json.Unmarshal(r.Input, &p) == nil {
-			out = append(out, "Code (line numbers are presentation only)")
-			for i, line := range strings.Split(p.Code, "\n") {
-				out = append(out, fmt.Sprintf("%4d  %s", i+1, Safe(line)))
-			}
-		} else {
-			out = append(out, "No code body in this record.")
-		}
 	case "output":
 		out = append(out, "Output")
 		out = append(out, prettyLines(r.Output)...)

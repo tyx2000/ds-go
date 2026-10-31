@@ -34,15 +34,6 @@ func freshShellEnvironment(base []string, tc core.ToolContext) ([]string, error)
 	return overlayEnvironment(base, facts), nil
 }
 
-// The model's persistent terminal backend has its own deliberately smaller
-// environment, distinct from fresh-shell facts and Host user terminals.
-func persistentShellEnvironment(base []string, owner, ptyID string) []string {
-	return overlayEnvironment(base, map[string]string{
-		"DSH_SHELL": "1", "DSH_SESSION_ID": owner, "DSH_PTY_SESSION_ID": ptyID,
-		"TERM": "dumb", "PAGER": "cat", "GIT_PAGER": "cat", "BASH_SILENCE_DEPRECATION_WARNING": "1",
-	})
-}
-
 func managedHarnessHome(explicit string) (string, error) {
 	selected := explicit
 	if selected == "" {

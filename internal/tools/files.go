@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,16 +26,8 @@ func (r *Registry) builtins() {
 		s core.ToolSpec
 		h Handler
 	}{
-		{spec("bash", "Run commands in a persistent bash shell. State, including the current directory and exported environment variables, persists across calls for this agent. Commands have a 300 second deadline. Run long lived commands in the background.", `{"type":"object","required":["command"],"additionalProperties":false,"properties":{"command":{"type":"string"}}}`), r.persistentBash},
-		{spec("read_file", "Read a UTF-8 text file. offset is a zero-based line number; limit is number of lines (default 200).", `{"type":"object","required":["path"],"properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`), r.legacyRead},
-		{spec("write_file", "Atomically write a UTF-8 file. Restricted writes outside the workspace require one-time approval.", `{"type":"object","required":["path","content"],"properties":{"path":{"type":"string"},"content":{"type":"string"}}}`), r.legacyWrite},
-		{spec("edit_file", "Replace an exact text match. Ambiguous matches fail unless replace_all is true.", `{"type":"object","required":["path","old_text","new_text"],"properties":{"path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"replace_all":{"type":"boolean"}}}`), r.legacyEdit},
 		{spec("list_directory", "List entries without following symlinks. Optional recursive traversal has bounded output.", `{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"boolean"},"limit":{"type":"integer"}}}`), listDirectory},
 		{spec("search_files", "Search UTF-8 files with a Go regular expression. Symlinks are not traversed; output is bounded.", `{"type":"object","required":["pattern"],"properties":{"path":{"type":"string"},"pattern":{"type":"string"},"glob":{"type":"string"},"limit":{"type":"integer"}}}`), searchFiles},
-		{spec("run_shell", "Run a shell command with the selected OS filesystem sandbox. timeout_ms defaults to 120000 (max 600000). Set background for an owner-scoped job; it is canceled when dsgo exits. sandbox full-access requires approval unless already full-access.", `{"type":"object","required":["command"],"properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"},"background":{"type":"boolean"},"sandbox":{"type":"string","enum":["read-only","workspace-write","full-access"]}}}`), r.runShell},
-		{spec("jobs", "Observe or manage this session's background shell jobs. Reading output is non-consuming unless consume is true.", `{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["list","output","wait","kill"]},"id":{"type":"string"},"offset":{"type":"integer"},"consume":{"type":"boolean"},"timeout_ms":{"type":"integer"}}}`), r.jobTool},
-		{spec("terminal", "Manage this session's real PTY terminals. start runs a shell (optional command); write sends exact input including control characters; resize changes terminal dimensions. read is non-consuming unless consume is true. Terminals stop when dsgo closes.", `{"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["start","list","read","write","resize","kill"]},"id":{"type":"string"},"command":{"type":"string"},"input":{"type":"string"},"rows":{"type":"integer"},"cols":{"type":"integer"},"offset":{"type":"integer"},"consume":{"type":"boolean"},"wait_ms":{"type":"integer"},"sandbox":{"type":"string","enum":["read-only","workspace-write","full-access"]}}}`), r.terminalTool},
-		{spec("run_code", "Execute erasable TypeScript in a fresh Node process. Supports top-level await and return. Await tools.<name>(args) to call the same visible tools and approvals. Direct Node filesystem/process APIs follow the selected OS sandbox. Memory is not retained. timeout_ms defaults to 120000 (max 600000).", `{"type":"object","required":["code"],"properties":{"code":{"type":"string"},"timeout_ms":{"type":"integer"},"sandbox":{"type":"string","enum":["read-only","workspace-write","full-access"]}}}`), r.runCode},
 	} {
 		if err := r.Register(d.s, d.h); err != nil {
 			panic(err)
@@ -68,25 +59,6 @@ func regularFile(path string) (*os.File, error) {
 		return nil, fmt.Errorf("file exceeds %d byte limit", maxFileBytes)
 	}
 	return f, nil
-}
-
-func readText(path string) ([]byte, error) {
-	f, err := regularFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > maxFileBytes {
-		return nil, errors.New("file grew beyond size limit")
-	}
-	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
-		return nil, errors.New("binary or non-UTF-8 file; use an attachment/preview instead")
-	}
-	return b, nil
 }
 
 func canonicalParent(path string) (string, error) {

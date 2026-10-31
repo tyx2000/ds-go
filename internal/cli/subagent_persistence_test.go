@@ -249,76 +249,9 @@ func TestDelegatedScopeRejectsApprovalAndAppearsInPrompt(t *testing.T) {
 	}}, "check_scope", core.JSON(map[string]any{})); err != nil || !called {
 		t.Fatalf("scope tool: %v", err)
 	}
-	for _, preset := range []string{"standard", "minimal"} {
-		child.Preset = preset
-		messages, err := a.requestContext(a.ctx, child)
-		if err != nil || len(messages) != 1 || messages[0].Role != "user" || !strings.Contains(messages[0].Content[0].Text, "permission scope was fixed") {
-			t.Fatalf("%s delegated context: %+v %v", preset, messages, err)
-		}
-	}
-}
-
-func TestSubagentPresetSelectionIsOptInAndColdRestorable(t *testing.T) {
-	a, parent, _ := officialApp(t)
-	if strings.Contains(string(a.subagentSpecFor(parent, false).InputSchema), "agent_preset") {
-		t.Fatal("default tool exposes an unconfigured preset choice")
-	}
-	a.cfg.SubagentAgentPreset = "minimal"
-	a.cfg.SubagentAllowedAgentPresets = []string{"minimal", "ptc"}
-	if !strings.Contains(string(a.subagentSpecFor(parent, false).InputSchema), `"agent_preset"`) || strings.Contains(string(a.subagentSpecFor(parent, true).InputSchema), `"agent_preset"`) {
-		t.Fatal("preset enum is not confined to configured spawn")
-	}
-	start := func(raw string, fork bool) (string, error) {
-		res, err := a.delegateOfficial(a.ctx, core.ToolContext{SessionID: parent.ID, CWD: parent.CWD}, json.RawMessage(raw), fork)
-		if err != nil {
-			return "", err
-		}
-		var activation struct {
-			ID string `json:"subagentId"`
-		}
-		if err := json.Unmarshal([]byte(res.Content), &activation); err != nil {
-			t.Fatal(err)
-		}
-		return activation.ID, nil
-	}
-	for _, args := range []string{`{"description":"x","prompt":"work","agent_preset":"standard"}`, `{"description":"x","prompt":"work","agent_preset":null}`} {
-		if _, err := start(args, false); err == nil {
-			t.Fatalf("accepted unconfigured or null preset: %s", args)
-		}
-	}
-	if _, err := start(`{"description":"x","prompt":"work","agent_preset":"minimal"}`, true); err == nil {
-		t.Fatal("fork accepted independent preset")
-	}
-	id, err := start(`{"description":"independent","prompt":"work"}`, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settleOfficial(t, a, parent.ID)
-	child, _ := a.store.Get(id)
-	if child.Preset != "minimal" || child.ExecutionMode != "native" {
-		t.Fatalf("configured independent preset not composed: %+v", child)
-	}
-	a.cfg.SubagentAgentPreset, a.cfg.SubagentAllowedAgentPresets = "", nil
-	inheritedID, err := start(`{"description":"inherited","prompt":"work"}`, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settleOfficial(t, a, parent.ID)
-	restartAgentManager(a)
-	parent.Preset, parent.ExecutionMode = "ptc", "ptc"
-	if err = a.store.Update(parent); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{id, inheritedID} {
-		if _, err := a.manager.sendOfficial(a.ctx, parent.ID, id, "follow"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	settleOfficial(t, a, parent.ID)
-	independent, _ := a.store.Get(id)
-	inherited, _ := a.store.Get(inheritedID)
-	if independent.Preset != "minimal" || inherited.Preset != "ptc" || inherited.ExecutionMode != "ptc" {
-		t.Fatalf("cold composition: independent=%+v inherited=%+v", independent, inherited)
+	messages, err := a.requestContext(a.ctx, child)
+	if err != nil || len(messages) != 1 || messages[0].Role != "user" || !strings.Contains(messages[0].Content[0].Text, "permission scope was fixed") {
+		t.Fatalf("delegated context: %+v %v", messages, err)
 	}
 }
 
@@ -358,12 +291,7 @@ func TestSubagentDepthContextUsesDurableFloorAndCurrentCap(t *testing.T) {
 	if err != nil || len(messages) != 1 || strings.Contains(messages[0].Content[0].Text, "remaining levels 0") {
 		t.Fatalf("depth context ignored changed cap: %+v %v", messages, err)
 	}
-	child.Preset = "minimal"
-	cap = 1
-	messages, err = a.requestContext(a.ctx, child)
-	if err != nil || len(messages) != 1 || strings.Contains(messages[0].Content[0].Text, "Delegation depth") {
-		t.Fatalf("hidden delegation tool contributed depth context: %+v %v", messages, err)
-	}
+
 }
 
 func TestSubagentManualForkResetsDepthButDelegatedForkIncrements(t *testing.T) {
@@ -482,47 +410,6 @@ func TestSubagentColdResumeRetainsLaterNarrowerPermission(t *testing.T) {
 	child, _ = a.store.Get(id)
 	if child.Permission != "read-only" {
 		t.Fatal("cold restoration widened later user permission")
-	}
-}
-
-func TestStructuredCompletionWaitsForOwnedStartsAndCleanup(t *testing.T) {
-	a, parent := lifecycleApp(t, lifecycleModel(func(ctx context.Context, _ core.Request, _ func(core.Delta)) (core.Response, error) {
-		<-ctx.Done()
-		return core.Response{}, ctx.Err()
-	}))
-	other, err := a.store.Create(parent.CWD, "independent tree")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reserved, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	defer once.Do(func() { close(release) })
-	started := make(chan string, 1)
-	go func() {
-		id, err := a.manager.spawnPrepared(a.ctx, parent.ID, "block", "owned", "fresh", func(string) error {
-			close(reserved)
-			<-release
-			return nil
-		})
-		if err != nil {
-			t.Error(err)
-		}
-		started <- id
-	}()
-	<-reserved
-	if a.manager.canCompleteStructured(parent.ID) || !a.manager.canCompleteStructured(other.ID) {
-		t.Fatal("pending materialization was missed or blocked an unrelated tree")
-	}
-	once.Do(func() { close(release) })
-	id := <-started
-	if id == "" || a.manager.canCompleteStructured(parent.ID) {
-		t.Fatal("published child was missed")
-	}
-	if err := a.manager.cancelAndDrain(a.ctx, parent.ID); err != nil {
-		t.Fatal(err)
-	}
-	if !a.manager.canCompleteStructured(parent.ID) {
-		t.Fatal("finished cleanup retained structured completion ownership")
 	}
 }
 

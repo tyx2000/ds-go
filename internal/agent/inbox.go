@@ -86,18 +86,8 @@ func (e *Engine) Inbox(ctx context.Context, id string, message core.Message) (st
 	if _, err := e.Store.Get(id); err != nil {
 		return "", err
 	}
-	unlockInput := func() {}
-	if structured := e.structuredRun(id); structured != nil {
-		structured.mu.Lock()
-		if !structured.acceptsInputLocked() {
-			structured.mu.Unlock()
-			return "", errors.New("structured output already staged: input is closed")
-		}
-		unlockInput = structured.mu.Unlock
-	}
 	entry := inboxEntry{ID: ID(), Message: message}
 	event, err := e.Store.Append(id, "", "user/inbox", entry)
-	unlockInput()
 	if err != nil {
 		return "", err
 	}
