@@ -1,0 +1,17 @@
+package state
+import (
+ "strings"
+ "testing"
+ "dsgo/internal/core"
+)
+func TestReviewMarkdownExportKeepsBatchedUserTask(t *testing.T) {
+ store,err:=Open(t.TempDir());if err!=nil{t.Fatal(err)}
+ s,err:=store.Create(t.TempDir(),"export");if err!=nil{t.Fatal(err)}
+ task:=core.TextMessage("user","UNIQUE_USER_TASK with @reference")
+ snapshot:=core.TextMessage("user","CAPTURED_REFERENCE_SNAPSHOT")
+ snapshot.Source=map[string]any{"kind":"session-reference"}
+ if _,err:=store.AppendInputBatch(s.ID,"turn",task,[]core.Message{snapshot});err!=nil{t.Fatal(err)}
+ if _,err:=store.Append(s.ID,"turn","assistant/message",core.TextMessage("assistant","ASSISTANT_ONLY"));err!=nil{t.Fatal(err)}
+ output,err:=store.Export(s.ID,"markdown");if err!=nil{t.Fatal(err)}
+ if !strings.Contains(string(output),"UNIQUE_USER_TASK"){t.Fatalf("Markdown export silently lost user task: %s",output)}
+}

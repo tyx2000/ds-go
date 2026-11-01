@@ -49,6 +49,7 @@ func (f *flags) bind(fs *flag.FlagSet) {
 
 type App struct {
 	in               *bufio.Reader
+	inputFile        *os.File
 	out, err         io.Writer
 	flags            flags
 	store            *state.Store
@@ -59,9 +60,10 @@ type App struct {
 	session          core.Session
 	writeMu          sync.Mutex
 	editor           *tui.LineEditor // nil unless stdin and stdout are terminals
-	inputMu          sync.Mutex
 	inputOnce        sync.Once
 	reads            chan inputRequest
+	inputGate        chan struct{}
+	inputStream      *stdinStream
 	manager          *agents
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -103,8 +105,12 @@ type inputLine struct {
 	err  error
 }
 type inputRequest struct {
-	reply   chan inputLine
-	options tui.LineOptions
+	reply    chan inputLine
+	options  tui.LineOptions
+	ctx      context.Context
+	composer bool
+	private  bool
+	action   inputAction
 }
 
 type fileSearch struct {
@@ -114,6 +120,7 @@ type fileSearch struct {
 
 func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a := &App{in: bufio.NewReader(in), out: out, err: errOut, flags: flags{home: state.DefaultRoot()}}
+	a.inputFile, _ = in.(*os.File)
 	// Interactive prompts edit whole characters; pipes keep line reading, and
 	// Emacs shell buffers keep canonical mode because Emacs edits the line.
 	if tty, ok := in.(*os.File); ok && tui.IsTerminal(tty) && os.Getenv("INSIDE_EMACS") == "" {
@@ -138,7 +145,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 2
 	}
 	if *versionFlag {
-		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", Version, core.UpstreamCommit)
+		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", displayVersion(), core.UpstreamCommit)
 		return 0
 	}
 	args = fs.Args()
@@ -152,7 +159,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 0
 	}
 	if command == "version" || command == "--version" {
-		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", Version, core.UpstreamCommit)
+		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", displayVersion(), core.UpstreamCommit)
 		return 0
 	}
 	a.unattended = command == "run"
@@ -565,8 +572,11 @@ func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 	if a.flags.json || a.unattended {
 		return false, errors.New("approval requires an interactive terminal; JSON mode denies unavailable interaction")
 	}
-	a.inputMu.Lock()
-	defer a.inputMu.Unlock()
+	release, err := a.beginInputInteraction(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
 	a.line("\nApproval %s\n%s\n%s\nAllow once? [y/N] ", clean(q.Tool), clean(q.Description), clean(string(q.Input)))
 	answer, err := a.readPrivateLine(ctx, "Allow once? [y/N] ")
 	if err != nil {
@@ -582,44 +592,10 @@ func (a *App) readLine(ctx context.Context) (string, error) {
 	return a.readLineWithOptions(ctx, tui.LineOptions{})
 }
 func (a *App) readPrivateLine(ctx context.Context, prompt string) (string, error) {
-	return a.readLineWithOptions(ctx, tui.LineOptions{Prompt: prompt})
+	return a.readInputRequest(ctx, tui.LineOptions{Prompt: prompt}, false, true)
 }
 func (a *App) readLineWithOptions(ctx context.Context, options tui.LineOptions) (string, error) {
-	// A single broker owns stdin. Each prompt has a private reply queue: after
-	// cancellation its eventual line is discarded, never reused as approval.
-	a.inputOnce.Do(func() {
-		a.reads = make(chan inputRequest)
-		go func() {
-			for {
-				select {
-				case req := <-a.reads:
-					var s string
-					var err error
-					if a.editor != nil {
-						s, err = a.editor.ReadLineWithOptions(req.options)
-					} else {
-						s, err = a.in.ReadString('\n')
-					}
-					req.reply <- inputLine{s, err}
-				case <-a.ctx.Done():
-					return
-				}
-			}
-		}()
-	})
-	done := make(chan inputLine, 1)
-	select {
-	case a.reads <- inputRequest{reply: done, options: options}:
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-	select {
-	case r := <-done:
-		return strings.TrimSuffix(strings.TrimSuffix(r.text, "\n"), "\r"), r.err
-	case <-ctx.Done():
-		a.line("\nInput cancelled. Press Enter to discard the previous prompt before continuing.\n")
-		return "", ctx.Err()
-	}
+	return a.readInput(ctx, options, false)
 }
 
 func (a *App) turn(prompt string) error {
@@ -703,7 +679,7 @@ func (a *App) chat() error {
 	if a.flags.json {
 		a.writeJSON(map[string]any{"type": "session", "session": a.session})
 	} else {
-		a.line("dsgo %s · %s · %s\nWorkspace: %s\nSession: %s\n/help commands · Ctrl+C cancel turn · /quit exit\n", Version, clean(a.session.Model), clean(a.session.Permission), clean(a.session.CWD), a.session.ID)
+		a.line("dsgo %s · %s · %s\nWorkspace: %s\nSession: %s\n/help commands · Ctrl+C cancel turn · /quit exit\n", displayVersion(), clean(a.session.Model), clean(a.session.Permission), clean(a.session.CWD), a.session.ID)
 	}
 	if a.session.Provider == "deepseek-official" && a.cfg.APIKey == "" && len(a.cfg.Account) == 0 {
 		a.line("Set DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\n")
@@ -712,12 +688,7 @@ func (a *App) chat() error {
 		a.showHistory()
 	}
 	for {
-		a.inputMu.Lock()
-		if !a.flags.json {
-			a.line("\n%s ", a.promptLabel("dsgo>"))
-		}
-		line, err := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("dsgo>") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
-		a.inputMu.Unlock()
+		line, err := a.readInput(a.ctx, tui.LineOptions{Prompt: a.promptLabel("dsgo>") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay}, true)
 		eof := errors.Is(err, io.EOF)
 		if err != nil && !eof {
 			return err
@@ -725,12 +696,7 @@ func (a *App) chat() error {
 		line = strings.TrimRight(line, "\r\n")
 		for strings.HasSuffix(line, "\\") && !eof {
 			line = strings.TrimSuffix(line, "\\") + "\n"
-			if !a.flags.json {
-				a.line("%s ", a.promptLabel("..."))
-			}
-			a.inputMu.Lock()
-			next, x := a.readLineWithOptions(a.ctx, tui.LineOptions{Prompt: a.promptLabel("...") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay})
-			a.inputMu.Unlock()
+			next, x := a.readInput(a.ctx, tui.LineOptions{Prompt: a.promptLabel("...") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay}, true)
 			line += strings.TrimRight(next, "\r\n")
 			eof = errors.Is(x, io.EOF)
 			if x != nil && !eof {
@@ -804,7 +770,7 @@ func (a *App) doctor() int {
 			backend = "Linux bubblewrap"
 		}
 	}
-	a.print(map[string]any{"version": Version, "upstream": core.UpstreamCommit, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "home": a.flags.home, "cwd": a.flags.cwd, "api_key_configured": a.cfg.APIKey != "", "base_url": a.cfg.BaseURL, "sandbox": backend, "image_codecs": attachments.ImageCodecStatus(), "parity": "in progress; see docs/PARITY.md"})
+	a.print(map[string]any{"version": displayVersion(), "upstream": core.UpstreamCommit, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "home": a.flags.home, "cwd": a.flags.cwd, "api_key_configured": a.cfg.APIKey != "", "base_url": a.cfg.BaseURL, "sandbox": backend, "image_codecs": attachments.ImageCodecStatus(), "parity": "in progress; see docs/PARITY.md"})
 	return 0
 }
 

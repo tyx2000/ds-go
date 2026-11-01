@@ -8,7 +8,7 @@ import (
 )
 
 func IsTerminal(*os.File) bool { return false }
-func rawTerminal(*os.File) (func(), error) {
+func rawTerminal(*os.File, ...bool) (func(), error) {
 	return nil, errors.New("interactive terminal pager unavailable on this platform")
 }
 func lineTerminal(*os.File) (func(), error) {

@@ -77,8 +77,15 @@ func (a *App) trajectoryCommand(arg string) error {
 		return nil
 	}
 	if !plain && !stats {
-		if output, ok := a.out.(*os.File); ok && tui.IsTerminal(os.Stdin) && tui.IsTerminal(output) {
-			return tui.Page(a.ctx, tui.PagerOptions{Input: os.Stdin, Terminal: output, Output: trajectoryWriter{a}, Load: load, Turn: turn})
+		if output, ok := a.out.(*os.File); ok && tui.IsTerminal(a.inputFile) && tui.IsTerminal(output) {
+			ctx := a.inputContext()
+			release, err := a.beginInputInteraction(ctx)
+			if err != nil {
+				return err
+			}
+			defer release()
+			reader := &pagerInput{logicalInput: logicalInput{ctx: ctx, stream: a.inputStream}}
+			return tui.Page(ctx, tui.PagerOptions{Input: a.inputFile, Reader: reader, Terminal: output, Output: trajectoryWriter{a}, Load: load, Turn: turn})
 		}
 	}
 	var lines []string

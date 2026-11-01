@@ -1,8 +1,9 @@
 PREFIX ?= $(HOME)/.local
+BUILD_TIMESTAMP ?= $(shell TZ=Asia/Shanghai date +%Y%m%d.%H%M%S)
 
 .PHONY: build test check install
 build:
-	go build -trimpath -o bin/dsgo ./cmd/dsgo
+	go build -trimpath -ldflags "-X dsgo/internal/cli.buildTimestamp=$(BUILD_TIMESTAMP)" -o bin/dsgo ./cmd/dsgo
 
 test:
 	go test ./... -timeout=120s

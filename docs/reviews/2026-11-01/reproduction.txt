@@ -1,0 +1,31 @@
+--- FAIL: TestReviewSkillCatalogTracksCurrentDirectory (0.07s)
+    review_b56eb33_test.go:26: new directory's child-only skill absent from actual system prompt
+    review_b56eb33_test.go:29: model can load child-only but /skills cannot: unknown skill "child-only"
+--- FAIL: TestReviewJSONConfigSetIsNDJSON (0.01s)
+    review_b56eb33_test.go:36: successful --json config set emitted ordinary text: "Saved max_steps.\n"
+--- FAIL: TestReviewAutomaticQuestionCanTakeOverIdleChatPrompt (0.52s)
+    review_trim_lifecycle_test.go:75: automatic question cannot be presented until a user submits an unrelated ordinary chat line
+--- FAIL: TestReviewOneShotSettlementReportsAutomaticTurnFailure (0.25s)
+    review_trim_lifecycle_test.go:98: Main(run) settlement reports success despite the owning automatic turn being durably failed: {"error":"REVIEW_BACKGROUND_COLLECTION_FAILED","status":"failed"}
+FAIL
+FAIL	dsgo/internal/cli	1.420s
+--- FAIL: TestReviewSummaryHonorsConfiguredOutputBudget (0.41s)
+    review_b56eb33_test.go:22: configured legal output budget works for agent but not compaction: requests=[agent:4096 compaction:65536] error=context compaction: max_tokens must be at most 8192 (got 65536)
+FAIL
+FAIL	dsgo/internal/agent	0.895s
+--- FAIL: TestReviewMarkdownExportKeepsBatchedUserTask (0.07s)
+    review_b56eb33_test.go:16: Markdown export silently lost user task: # export
+        
+        Session: `ba1120695f14256aa8b7116e0c7fa24f`
+        
+        ## assistant
+        
+        ASSISTANT_ONLY
+        
+FAIL
+FAIL	dsgo/internal/state	0.553s
+--- FAIL: TestReviewPromotedJobCannotLoseCompletionNotice (0.19s)
+    review_b56eb33_test.go:36: actual job returned promoted yet settlement suppressed completion notice: {"cwd":"/var/folders/tq/6nn8y56s3r728v7h2x03fwhm0000gn/T/TestReviewPromotedJobCannotLoseCompletionNotice3946736253/001","jobId":"bash-0f3c0c61e3f915a6","kind":"promoted","output":"completed","timeoutMs":100}
+FAIL
+FAIL	dsgo/internal/tools	0.694s
+FAIL

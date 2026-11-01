@@ -1,0 +1,23 @@
+package agent
+
+import (
+ "context"
+ "fmt"
+ "testing"
+ "dsgo/internal/core"
+)
+
+func TestReviewSummaryHonorsConfiguredOutputBudget(t *testing.T) {
+ store,s := setup(t)
+ longHistory(t,store,s.ID,4,2000)
+ var requests []string
+ model := fakeModel{func(_ context.Context, req core.Request, _ func(core.Delta)) (core.Response,error) {
+  requests=append(requests,fmt.Sprintf("%s:%d",req.Purpose,req.MaxTokens))
+  if req.MaxTokens>8192 { return core.Response{},fmt.Errorf("max_tokens must be at most 8192 (got %d)",req.MaxTokens) }
+  return core.Response{Content:[]core.Block{{Type:"text",Text:"Completed prior work."}},StopReason:"end_turn"},nil
+ }}
+ e:=New(store,model,&fakeTools{},Options{Model:"small-output-model",MaxTokens:4096,ContextTokens:1000000})
+ defer e.Close()
+ if err:=e.Run(context.Background(),s.ID,core.TextMessage("user","Continue."));err!=nil {t.Fatal("ordinary request failed:",err)}
+ if err:=e.Compact(context.Background(),s.ID);err!=nil {t.Fatalf("configured legal output budget works for agent but not compaction: requests=%v error=%v",requests,err)}
+}

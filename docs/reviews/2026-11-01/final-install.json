@@ -1,0 +1,6 @@
+{
+  "result": "passed",
+  "installed": "/Users/adib/.local/bin/dsgo",
+  "sha256": "31b5b52d55c6ea79c79f6f3016c82b2627fa29f3a6e0fba3cd6c0507abd1866b",
+  "version": "dsgo 0.1.0-dev\nupstream 687f282e8625c6b8d11ff58211a90524be2e4317\n"
+}

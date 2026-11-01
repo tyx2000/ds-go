@@ -22,7 +22,7 @@ func IsTerminal(file *os.File) bool {
 	var t syscall.Termios
 	return ioctl(file.Fd(), syscall.TCGETS, unsafe.Pointer(&t)) == nil
 }
-func rawTerminal(file *os.File) (func(), error) {
+func rawTerminal(file *os.File, blocking ...bool) (func(), error) {
 	var before syscall.Termios
 	if err := ioctl(file.Fd(), syscall.TCGETS, unsafe.Pointer(&before)); err != nil {
 		return nil, err
@@ -34,6 +34,9 @@ func rawTerminal(file *os.File) (func(), error) {
 	raw.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.IEXTEN | syscall.ISIG
 	raw.Cc[syscall.VMIN] = 0
 	raw.Cc[syscall.VTIME] = 1
+	if len(blocking) > 0 && blocking[0] {
+		raw.Cc[syscall.VMIN], raw.Cc[syscall.VTIME] = 1, 0
+	}
 	if err := ioctl(file.Fd(), syscall.TCSETS, unsafe.Pointer(&raw)); err != nil {
 		return nil, err
 	}

@@ -51,6 +51,7 @@ func TestSlashHelpListsEveryCommandOnItsOwnLine(t *testing.T) {
 }
 
 func TestPromptIsHighlightedOnlyOnInteractiveTerminals(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("NO_COLOR", "")
 	a := &App{}
 	if got := a.promptLabel("dsgo>"); got != "dsgo>" {
@@ -60,6 +61,11 @@ func TestPromptIsHighlightedOnlyOnInteractiveTerminals(t *testing.T) {
 	if got := a.promptLabel("dsgo>"); got != "\x1b[1;36mdsgo>\x1b[0m" {
 		t.Fatalf("terminal prompt not highlighted: %q", got)
 	}
+	t.Setenv("TERM", "dumb")
+	if got := a.promptLabel("dsgo>"); got != "dsgo>" {
+		t.Fatalf("dumb terminal prompt carried escapes: %q", got)
+	}
+	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("NO_COLOR", "1")
 	if got := a.promptLabel("dsgo>"); got != "dsgo>" {
 		t.Fatalf("NO_COLOR ignored: %q", got)

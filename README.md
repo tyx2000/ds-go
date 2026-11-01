@@ -24,6 +24,8 @@ dsgo
 
 请确保 `~/.local/bin` 已在 `PATH` 中。也可以 `go install ./cmd/dsgo` 安装到自己的 `GOBIN`。
 
+`dsgo version`（或 `dsgo --version`）显示如 `0.1.0-dev+20261101.170107` 的版本号，`+` 后为北京时间的年月日、时分秒。`make build/install` 自动记录构建时间；直接 `go build/install` 使用源码中记录的更新时间。可通过 `make build BUILD_TIMESTAMP=20261101.170107` 固定时间以复现构建。交互启动信息和 `doctor` 使用相同版本标识。
+
 凭据可从官方账户或 API key 二选一配置：
 
 ```sh
@@ -57,7 +59,7 @@ dsgo models
 
 | 文件 | `/files PATH`、`/read PATH`、`/diff`、`/attach PATH` |
 | 上下文 | `/compact`、`/continue`、`/skills`、`/skills NAME` |
-| 任务 | `/goal TEXT`、`/goal status`、`/goal pause`、`/goal resume`、`/todo TEXT` |
+| 任务 | `/goal TEXT`、`/goal status`、`/goal pause`、`/goal resume`、`/todo` |
 | 后台任务与代理 | `/jobs`、`/jobs ID`、`/jobs kill ID`、`/agents` |
 
 `/jobs` 列出模型在本会话启动的后台命令，`/jobs ID` 查看其已保留输出（不影响模型的读取位置），`/jobs kill ID` 停止它。后台命令属于当前进程，退出 dsgo 会结束。

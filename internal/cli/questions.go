@@ -64,8 +64,11 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 	if a.unattended || a.flags.json {
 		return result, errors.New("user question requires interactive input")
 	}
-	a.inputMu.Lock()
-	defer a.inputMu.Unlock()
+	release, err := a.beginInputInteraction(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer release()
 	for _, q := range questions {
 		if q.Header != "" {
 			a.line("\n%s\n", clean(q.Header))

@@ -1,0 +1,42 @@
+{
+  "result": "passed",
+  "version": "0.1.0-dev+20261101.170347",
+  "update_time_asia_shanghai": "2026-11-01T17:03:47+08:00",
+  "sha256": "079149214a0c324081c1f62c22fe7e9afa30d4ad250061edbf071678d382e48b",
+  "scope": "Version aliases, doctor JSON and chat banner agree; make build injects actual Asia/Shanghai build time; no provider calls.",
+  "checks": [
+    {
+      "args": [
+        "version"
+      ],
+      "exit": 0,
+      "stdout": "dsgo 0.1.0-dev+20261101.170347\nupstream 687f282e8625c6b8d11ff58211a90524be2e4317\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--version"
+      ],
+      "exit": 0,
+      "stdout": "dsgo 0.1.0-dev+20261101.170347\nupstream 687f282e8625c6b8d11ff58211a90524be2e4317\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--json",
+        "doctor"
+      ],
+      "exit": 0,
+      "stdout": "{\"api_key_configured\":false,\"arch\":\"arm64\",\"base_url\":\"https://api.deepseek.com/anthropic\",\"cwd\":\"/private/tmp/dsgo-version-smoke-bslhlqof/workspace\",\"go\":\"go1.27.3\",\"home\":\"/private/tmp/dsgo-version-smoke-bslhlqof/data\",\"image_codecs\":{\"transparent_image_conversion_requires\":\"cwebp (libwebp)\",\"webp_encoder\":\"/opt/homebrew/bin/cwebp\",\"webp_encoder_available\":true},\"os\":\"darwin\",\"parity\":\"in progress; see docs/PARITY.md\",\"sandbox\":\"macOS Seatbelt (file effects)\",\"upstream\":\"687f282e8625c6b8d11ff58211a90524be2e4317\",\"version\":\"0.1.0-dev+20261101.170347\"}\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "chat"
+      ],
+      "exit": 0,
+      "stdout": "dsgo 0.1.0-dev+20261101.170347 · deepseek-flash · workspace-write\nWorkspace: /private/tmp/dsgo-version-smoke-bslhlqof/workspace\nSession: 453236225227c6207ff924ec15cf00b4\n/help commands · Ctrl+C cancel turn · /quit exit\nSet DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\n\ndsgo> ",
+      "stderr": ""
+    }
+  ]
+}

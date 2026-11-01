@@ -1,0 +1,103 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"dsgo/internal/agent"
+	"dsgo/internal/core"
+	"dsgo/internal/tools"
+)
+
+type reviewBlockingPromptReader struct {
+	io.Reader
+	once sync.Once
+	entered chan struct{}
+}
+func (r *reviewBlockingPromptReader) Read(p []byte) (int, error) {
+	r.once.Do(func(){ close(r.entered) })
+	return r.Reader.Read(p)
+}
+type reviewQuestionWriter struct {
+	once sync.Once
+	shown chan struct{}
+}
+func (w *reviewQuestionWriter) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "REVIEW_AUTOMATIC_QUESTION") {
+		w.once.Do(func(){ close(w.shown) })
+	}
+	return len(p), nil
+}
+
+// Correct-behavior assertion: an ordinary root wake must be able to present
+// its interactive question while chat is waiting for the next normal input.
+// No shell/model network call is made; io.Pipe supplies the idle stdin.
+func TestReviewAutomaticQuestionCanTakeOverIdleChatPrompt(t *testing.T) {
+	var calls atomic.Int32
+	a, parent := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
+		if calls.Add(1) == 1 {
+			return core.Response{Content: []core.Block{{Type:"tool_use", ID:"ask1", Name:"ask_user_question", Input:core.JSON(map[string]any{"questions":[]any{map[string]any{"id":"q", "question":"REVIEW_AUTOMATIC_QUESTION", "options":[]any{map[string]any{"label":"Yes"}}}}})}}}, nil
+		}
+		return core.Response{Content: []core.Block{{Type:"text", Text:"done"}}}, nil
+	}))
+	a.session = parent
+	reader, writer := io.Pipe()
+	entered := make(chan struct{})
+	a.in = bufio.NewReader(&reviewBlockingPromptReader{Reader:reader, entered:entered})
+	question := &reviewQuestionWriter{shown:make(chan struct{})}
+	a.out = question
+	toolStarted := make(chan struct{})
+	var once sync.Once
+	a.engine.Notify = func(n agent.Notice) {
+		if n.Type == "tool_started" { once.Do(func(){ close(toolStarted) }) }
+	}
+	chatDone := make(chan error, 1)
+	go func(){ chatDone <- a.chat() }()
+	t.Cleanup(func(){
+		a.cancel()
+		_ = reader.Close()
+		_ = writer.Close()
+		select {case <-chatDone: case <-time.After(time.Second): t.Error("chat cleanup stalled")}
+	})
+	select {case <-entered: case <-time.After(time.Second): t.Fatal("chat did not own stdin")}
+	if _, err := a.manager.deliver(a.ctx, parent.ID, core.TextMessage("user", "background job finished"), true); err != nil { t.Fatal(err) }
+	select {case <-toolStarted: case <-time.After(time.Second): t.Fatal("automatic turn never called ask_user_question")}
+	select {
+	case <-question.shown:
+	case <-time.After(300*time.Millisecond):
+		t.Fatal("automatic question cannot be presented until a user submits an unrelated ordinary chat line")
+	}
+}
+
+// Correct-behavior assertion for the same settleDelegations function Main(run)
+// consults before returning exit 0. The owner already completed its first turn;
+// a synthetic owned-job notice triggers an independent automatic root turn.
+func TestReviewOneShotSettlementReportsAutomaticTurnFailure(t *testing.T) {
+	var calls atomic.Int32
+	failed := make(chan struct{})
+	a, parent := lifecycleApp(t, lifecycleModel(func(context.Context, core.Request, func(core.Delta)) (core.Response, error) {
+		if calls.Add(1) == 1 { return core.Response{Content:[]core.Block{{Type:"text", Text:"waiting for background result"}}}, nil }
+		close(failed)
+		return core.Response{}, errors.New("REVIEW_BACKGROUND_COLLECTION_FAILED")
+	}))
+	a.session = parent
+	if err := a.turn("start work"); err != nil { t.Fatal(err) }
+	a.deliverJobNotice(tools.JobNotice{Owner:parent.ID, Text:"background job finished; collect result", Summary:"job finished"})
+	select {case <-failed: case <-time.After(time.Second): t.Fatal("automatic completion request never ran")}
+	if err := a.settleDelegations(); err == nil {
+		events, _ := a.store.Events(parent.ID)
+		for _, event := range events {
+			if event.Type == "turn/finished" && strings.Contains(string(event.Data), "REVIEW_BACKGROUND_COLLECTION_FAILED") {
+				t.Fatalf("Main(run) settlement reports success despite the owning automatic turn being durably failed: %s", event.Data)
+			}
+		}
+		t.Fatal("settlement reported success after failed automatic root turn")
+	}
+}

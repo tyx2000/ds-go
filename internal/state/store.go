@@ -621,26 +621,41 @@ func (s *Store) Export(id, format string) ([]byte, error) {
 		var out strings.Builder
 		fmt.Fprintf(&out, "# %s\n\nSession: `%s`\n\n", strings.ReplaceAll(session.Title, "\n", " "), session.ID)
 		for _, ev := range events {
-			if ev.Type != "user/message" && ev.Type != "assistant/message" && ev.Type != "tool/result" {
-				continue
-			}
-			var m core.Message
-			if err := json.Unmarshal(ev.Data, &m); err != nil {
+			messages, input, err := core.UserInputMessages(ev)
+			if err != nil {
 				return nil, err
 			}
-			fmt.Fprintf(&out, "## %s\n\n", m.Role)
-			for _, block := range m.Content {
-				switch block.Type {
-				case "text":
-					out.WriteString(block.Text + "\n\n")
-				case "thinking":
-					out.WriteString("<details><summary>Thinking</summary>\n\n" + block.Thinking + "\n\n</details>\n\n")
-				case "tool_use":
-					fmt.Fprintf(&out, "Tool: `%s`\n\n```json\n%s\n```\n\n", block.Name, block.Input)
-				case "tool_result":
-					fmt.Fprintf(&out, "Tool result `%s` (error=%t):\n\n%v\n\n", block.ToolUseID, block.IsError, block.Content)
-				default:
-					fmt.Fprintf(&out, "[%s attachment]\n\n", block.Type)
+			if !input {
+				if ev.Type != "assistant/message" && ev.Type != "tool/result" {
+					continue
+				}
+				var message core.Message
+				if err := json.Unmarshal(ev.Data, &message); err != nil {
+					return nil, err
+				}
+				messages = []core.Message{message}
+			}
+			for index, message := range messages {
+				if input && index > 0 {
+					// Captures belong to the input's audit record, but are not
+					// additional text authored by the user.
+					fmt.Fprintf(&out, "## %s (captured context)\n\n", message.Role)
+				} else {
+					fmt.Fprintf(&out, "## %s\n\n", message.Role)
+				}
+				for _, block := range message.Content {
+					switch block.Type {
+					case "text":
+						out.WriteString(block.Text + "\n\n")
+					case "thinking":
+						out.WriteString("<details><summary>Thinking</summary>\n\n" + block.Thinking + "\n\n</details>\n\n")
+					case "tool_use":
+						fmt.Fprintf(&out, "Tool: `%s`\n\n```json\n%s\n```\n\n", block.Name, block.Input)
+					case "tool_result":
+						fmt.Fprintf(&out, "Tool result `%s` (error=%t):\n\n%v\n\n", block.ToolUseID, block.IsError, block.Content)
+					default:
+						fmt.Fprintf(&out, "[%s attachment]\n\n", block.Type)
+					}
 				}
 			}
 		}

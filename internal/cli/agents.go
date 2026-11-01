@@ -62,6 +62,7 @@ type agents struct {
 	draining        map[string]int
 	wakePaused      map[string]bool
 	wakeRuns        map[uint64]*parentWake
+	wakeFailures    map[string]rootWakeFailure // unresolved automatic root outcomes, not child failures
 	wakeWG          sync.WaitGroup
 	nextWake        uint64
 	settling        map[string]int // completion notices not yet accepted by their parent
@@ -553,13 +554,19 @@ func (a *App) Execute(ctx context.Context, tc core.ToolContext, name string, raw
 	return a.registry.Execute(ctx, tc, registryName, raw)
 }
 func (a *App) systemFor(s core.Session) (string, error) {
-	skills, err := instructions.Skills(s.CWD)
+	skills, err := a.skillsFor(a.ctx, s.ID, s.CWD)
 	if err != nil {
 		return "", err
 	}
 	return a.presetSystemPrompt(s, skills), nil
 }
-func (a *App) loadSkill(name string) (string, error) { return instructions.LoadSkill(a.skills, name) }
+func (a *App) loadSkill(name string) (string, error) {
+	skills, err := a.skillsFor(a.ctx, a.session.ID, a.session.CWD)
+	if err != nil {
+		return "", err
+	}
+	return instructions.LoadSkill(skills, name)
+}
 
 func toolSpec(name, desc, schema string) core.ToolSpec {
 	return core.ToolSpec{Name: name, Description: desc, InputSchema: json.RawMessage(schema)}
@@ -576,7 +583,7 @@ func (a *App) registerTools() error {
 			if err := agent.Decode(raw, &p); err != nil {
 				return core.ToolResult{}, err
 			}
-			skills, err := instructions.Skills(tc.CWD)
+			skills, err := a.skillsFor(ctx, tc.SessionID, tc.CWD)
 			if err != nil {
 				return core.ToolResult{}, err
 			}

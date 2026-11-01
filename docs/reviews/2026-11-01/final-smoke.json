@@ -1,0 +1,62 @@
+{
+  "result": "passed",
+  "artifact_sha256": "31b5b52d55c6ea79c79f6f3016c82b2627fa29f3a6e0fba3cd6c0507abd1866b",
+  "scope": "Isolated data/workspace; config persistence+NDJSON+invalid value; chat help/history/quit NDJSON; FIFO attachment refuses without writer; no provider calls.",
+  "runs": [
+    {
+      "args": [
+        "--version"
+      ],
+      "exit": 0,
+      "seconds": 0.623,
+      "stdout": "dsgo 0.1.0-dev\nupstream 687f282e8625c6b8d11ff58211a90524be2e4317\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--json",
+        "config",
+        "set",
+        "max_steps",
+        "200"
+      ],
+      "exit": 0,
+      "seconds": 0.023,
+      "stdout": "{\"text\":\"Saved max_steps.\\n\",\"type\":\"output\"}\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--json",
+        "config",
+        "set",
+        "max_steps",
+        "-1"
+      ],
+      "exit": 1,
+      "seconds": 0.012,
+      "stdout": "",
+      "stderr": "dsgo: max_steps must be between 1 and 10000\n"
+    },
+    {
+      "args": [
+        "--json",
+        "chat"
+      ],
+      "exit": 0,
+      "seconds": 0.041,
+      "stdout": "{\"session\":{\"provider\":\"deepseek-official\",\"id\":\"f005cf37619a5ab9e33d77e63626cbe1\",\"title\":\"New session\",\"cwd\":\"/private/tmp/dsgo-final-smoke-ddp73n9r/workspace\",\"created_at\":\"2026-11-01T04:22:17.471425Z\",\"updated_at\":\"2026-11-01T04:22:17.471425Z\",\"model\":\"deepseek-flash\",\"thinking\":\"high\",\"permission\":\"workspace-write\"},\"type\":\"session\"}\n{\"text\":\"Set DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\\n\",\"type\":\"output\"}\n{\"text\":\"Sessions\\n  /new                    Start a new session in this workspace\\n  /sessions [QUERY]       List sessions, or search titles and folders\\n  /resume [ID]            Switch to a session (default: the latest)\\n  /fork                   Copy this session into a new one\\n  /rename TITLE           Rename this session\\n  /archive                Archive this session and start a new one\\n  /history                Show this session's messages\\n  /export FORMAT [PATH]   Export as markdown, json or jsonl\\n  /status                 Show session details and plan mode\\n\\nModel and behavior\\n  /model [NAME]           Set the model (no NAME: show settings)\\n  /provider [NAME]        Switch to a configured provider\\n  /thinking [LEVEL]       Set reasoning: off, low, high or max\\n  /permission [MODE]      File access: read-only, workspace-write, full-access\\n  /plan [off|MESSAGE]     Select plan guidance; review with exit_plan_mode\\n\\nContext and tasks\\n  /compact                Summarize history to free context space\\n  /continue               Ask the model to continue unfinished work\\n  /goal TEXT              Set a goal the agent keeps working toward\\n  /goal ACTION            Goal control: status, pause, resume or clear\\n  /todo                   Show the current todo list\\n  /skills [NAME]          List skills, or show one skill's instructions\\n\\nFiles and workspace\\n  /cwd [PATH]             Show or change the working directory\\n  /files [PATH]           List a directory\\n  /read PATH              Show a text file with line numbers\\n  /attach PATH            Attach a file or image to your next message\\n  /diff                   Show uncommitted Git changes\\n  /artifacts [ARGS]       Per-turn file changes and full tool outputs\\n\\nBackground work\\n  /jobs [ID|kill ID]      List background jobs, show one's output or stop it\\n  /agents                 List subagents and their status\\n\\nInspection\\n  /trajectory [N]         Browse turns, tool calls and timing\\n  /stats                  Show session statistics and token usage\\n\\n  /help                   Show this list\\n  /quit                   Exit dsgo (also /exit)\\n\\nEnd a line with \\\\ to continue on the next line. Ctrl+C cancels the running\\nturn or clears the line being typed. Ctrl+D on an empty line exits.\\n\",\"type\":\"output\"}\n{\"messages\":[],\"session_id\":\"f005cf37619a5ab9e33d77e63626cbe1\",\"type\":\"history\"}\n",
+      "stderr": ""
+    },
+    {
+      "args": [
+        "--json",
+        "chat"
+      ],
+      "exit": 0,
+      "seconds": 0.036,
+      "stdout": "{\"session\":{\"provider\":\"deepseek-official\",\"id\":\"07fa1401848f162c823449d6106fb99c\",\"title\":\"New session\",\"cwd\":\"/private/tmp/dsgo-final-smoke-ddp73n9r/workspace\",\"created_at\":\"2026-11-01T04:22:17.504304Z\",\"updated_at\":\"2026-11-01T04:22:17.504304Z\",\"model\":\"deepseek-flash\",\"thinking\":\"high\",\"permission\":\"workspace-write\"},\"type\":\"session\"}\n{\"text\":\"Set DEEPSEEK_API_KEY or use dsgo config set api_key --stdin before sending a task.\\n\",\"type\":\"output\"}\n{\"events\":0,\"plan\":false,\"session\":{\"provider\":\"deepseek-official\",\"id\":\"07fa1401848f162c823449d6106fb99c\",\"title\":\"New session\",\"cwd\":\"/private/tmp/dsgo-final-smoke-ddp73n9r/workspace\",\"created_at\":\"2026-11-01T04:22:17.504304Z\",\"updated_at\":\"2026-11-01T04:22:17.517083Z\",\"model\":\"deepseek-flash\",\"thinking\":\"high\",\"permission\":\"workspace-write\"}}\n",
+      "stderr": "dsgo: attachment must be a regular file of at most 20 MiB\n"
+    }
+  ]
+}

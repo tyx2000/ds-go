@@ -660,8 +660,12 @@ func (m *agents) deliver(ctx context.Context, target string, message core.Messag
 			m.mu.Unlock()
 		}()
 		// A busy Session admits the message itself; an idle one is woken.
-		if err := m.app.engine.ContinueInbox(wakeCtx, target); err != nil && !errors.Is(err, context.Canceled) {
-			m.app.line("[agent %s could not continue: %s]\n", target, clean(err.Error()))
+		before, known := m.wakeStartSequence(target)
+		if err := m.app.engine.ContinueInbox(wakeCtx, target); err != nil {
+			m.recordWakeFailure(target, wakeID, before, known, err)
+			if !errors.Is(err, context.Canceled) {
+				m.app.line("[agent %s could not continue: %s]\n", target, clean(err.Error()))
+			}
 		}
 	}()
 	return id, nil
@@ -792,30 +796,64 @@ func (m *agents) waitProgressingChildren(ctx context.Context, parent string) err
 	}
 }
 
+// settlementStateLocked observes only manager-owned work. Registry checks
+// happen outside mu because their completion callback registers wakes here.
+func (m *agents) settlementStateLocked(parent string) (bool, []string) {
+	busy := false
+	owners := append(m.descendantsLocked(parent), parent)
+	for _, id := range owners[:len(owners)-1] {
+		busy = busy || m.children[id].Status == "running"
+	}
+	for id, count := range m.settling {
+		busy = busy || (count > 0 && m.belongsLocked(id, parent))
+	}
+	for _, wake := range m.wakeRuns {
+		busy = busy || m.belongsLocked(wake.target, parent)
+	}
+	for _, reservation := range m.reservations {
+		busy = busy || m.belongsLocked(reservation.parent, parent)
+	}
+	return busy, owners
+}
+
+func (m *agents) ownedWorkPending(parent string, jobsPending func(string) bool) bool {
+	m.mu.Lock()
+	busy, owners := m.settlementStateLocked(parent)
+	m.mu.Unlock()
+	if busy {
+		return true
+	}
+	for _, owner := range owners {
+		if jobsPending(owner) {
+			return true
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	busy, currentOwners := m.settlementStateLocked(parent)
+	if busy || len(owners) != len(currentOwners) {
+		return true
+	}
+	seen := make(map[string]bool, len(owners))
+	for _, owner := range owners {
+		seen[owner] = true
+	}
+	for _, owner := range currentOwners {
+		if !seen[owner] {
+			return true
+		}
+	}
+	// A job may have handed off its notice after the first manager snapshot.
+	// Recheck its registered wake before relying on Engine.Busy, which can
+	// remain false until that wake goroutine gets scheduled.
+	return m.app.engine.Busy(parent)
+}
+
 func (m *agents) settle(ctx context.Context, parent string) error {
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		m.mu.Lock()
-		busy := false
-		owners := append(m.descendantsLocked(parent), parent)
-		for _, id := range owners[:len(owners)-1] {
-			busy = busy || m.children[id].Status == "running"
-		}
-		for id, count := range m.settling {
-			busy = busy || (count > 0 && m.belongsLocked(id, parent))
-		}
-		for _, wake := range m.wakeRuns {
-			busy = busy || m.belongsLocked(wake.target, parent)
-		}
-		for _, reservation := range m.reservations {
-			busy = busy || m.belongsLocked(reservation.parent, parent)
-		}
-		m.mu.Unlock()
-		for _, owner := range owners {
-			busy = busy || m.app.registry.HasPendingSessionJobs(owner)
-		}
-		if !busy && !m.app.engine.Busy(parent) {
+		if !m.ownedWorkPending(parent, m.app.registry.HasPendingSessionJobs) {
 			return nil
 		}
 		select {
@@ -903,6 +941,9 @@ func (a *App) settleDelegations() error {
 		if !driving && !a.engine.Busy(a.session.ID) {
 			break
 		}
+	}
+	if err == nil {
+		err = a.manager.rootWakeError(a.session.ID)
 	}
 	if err != nil && a.ctx.Err() == nil {
 		a.manager.cancelChildren(a.session.ID)

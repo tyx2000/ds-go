@@ -1,0 +1,4 @@
+ok  	dsgo/internal/cli	2.977s
+ok  	dsgo/internal/agent	2.451s
+ok  	dsgo/internal/state	1.638s
+ok  	dsgo/internal/tools	1.715s

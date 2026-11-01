@@ -1,0 +1,28 @@
+2026-11-01 Asia/Shanghai — timestamped version follow-up
+
+Retain base version 0.1.0-dev for protocol clients. Display version adds
+Asia/Shanghai YYYYMMDD.HHMMSS as SemVer build metadata. make build/install
+inject build time; direct go build/install retain the source update time.
+
+make build
+  passed; displayed version 0.1.0-dev+20261101.170347
+  binary SHA256 079149214a0c324081c1f62c22fe7e9afa30d4ad250061edbf071678d382e48b
+
+TERM=dumb NO_COLOR=1 go test -race ./... -count=1 -timeout=60s
+  all packages passed; internal/cli 43.882s
+  GOCACHE=/private/tmp/dsgo-go-cache
+  GOMODCACHE=/Users/adib/go/pkg/mod GOPROXY=off
+
+go vet ./...
+  passed
+python3 scripts/verify-upstream.py
+  verified 6 pinned upstream inputs
+git diff --check
+  passed
+
+Isolated real-binary smoke: version and --version identical; doctor JSON
+version and chat banner match; build time parses to actual Asia/Shanghai
+build time. No provider calls. Detailed output: version-smoke.json.
+
+Direct go build -trimpath also passed; source fallback appears as
+0.1.0-dev+20261101.170107.

@@ -1,0 +1,37 @@
+package cli
+import (
+ "context"
+ "encoding/json"
+ "os"
+ "path/filepath"
+ "strings"
+ "testing"
+ instructions "dsgo/internal/context"
+ "dsgo/internal/core"
+)
+func TestReviewSkillCatalogTracksCurrentDirectory(t *testing.T) {
+ t.Setenv("HOME",t.TempDir())
+ a,s:=lifecycleApp(t,lifecycleModel(func(context.Context,core.Request,func(core.Delta))(core.Response,error){return core.Response{},nil}))
+ a.session=s
+ child:=filepath.Join(s.CWD,"child")
+ for _,item:=range []struct{dir,name string}{{s.CWD,"root-only"},{child,"child-only"}} {
+  dir:=filepath.Join(item.dir,".agents","skills",item.name)
+  if err:=os.MkdirAll(dir,0700);err!=nil{t.Fatal(err)}
+  if err:=os.WriteFile(filepath.Join(dir,"SKILL.md"),[]byte("---\nname: "+item.name+"\ndescription: Fixture\n---\nInstruction body\n"),0600);err!=nil{t.Fatal(err)}
+ }
+ var err error
+ a.skills,err=instructions.Skills(s.CWD);if err!=nil{t.Fatal(err)}
+ if _,err:=a.workingDirectory(a.ctx,contractsContext(a,s),core.JSON(map[string]any{"cd":"child"}));err!=nil{t.Fatal(err)}
+ prompt,err:=a.systemFor(s);if err!=nil{t.Fatal(err)}
+ if !strings.Contains(prompt,"child-only") {t.Error("new directory's child-only skill absent from actual system prompt")}
+ result,err:=a.Execute(a.ctx,contractsContext(a,s),"load_skill",core.JSON(map[string]any{"name":"child-only"}))
+ if err!=nil||!strings.Contains(result.Content,"Instruction body"){t.Fatalf("setup: model load failed: %v",err)}
+ if _,err:=a.loadSkill("child-only");err!=nil{t.Errorf("model can load child-only but /skills cannot: %v",err)}
+}
+func TestReviewJSONConfigSetIsNDJSON(t *testing.T) {
+ home:=t.TempDir()
+ var out,errout strings.Builder
+ code:=Main([]string{"--home",home,"--json","config","set","max_steps","200"},strings.NewReader(""),&out,&errout)
+ if code!=0{t.Fatalf("setup exited %d: %s",code,errout.String())}
+ if !json.Valid([]byte(strings.TrimSpace(out.String()))){t.Fatalf("successful --json config set emitted ordinary text: %q",out.String())}
+}

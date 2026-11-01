@@ -67,7 +67,7 @@ func (a *App) config(args []string) int {
 	if err := state.SaveConfig(a.flags.home, a.cfg); err != nil {
 		return a.fail(err)
 	}
-	fmt.Fprintf(a.out, "Saved %s.\n", key)
+	a.line("Saved %s.\n", key)
 	return 0
 }
 
@@ -287,7 +287,11 @@ func (a *App) slash(line string) (bool, error) {
 		return false, nil
 	case "skills":
 		if arg == "" {
-			a.print(a.skills)
+			skills, err := a.skillsFor(a.ctx, a.session.ID, a.session.CWD)
+			if err != nil {
+				return false, err
+			}
+			a.print(skills)
 			return false, nil
 		}
 		text, err := a.loadSkill(arg)

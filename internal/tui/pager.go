@@ -11,7 +11,11 @@ import (
 )
 
 type PagerOptions struct {
-	Input    *os.File
+	Input *os.File
+	// Reader optionally supplies bytes from a shared stdin owner. It returns
+	// (0,nil) on idle polls and observes cancellation; EOF means the stream
+	// really ended. Input remains the terminal-control handle.
+	Reader   io.Reader
 	Output   io.Writer
 	Terminal *os.File
 	Load     func() (Transcript, error)
@@ -38,7 +42,7 @@ func Page(ctx context.Context, o PagerOptions) error {
 	if o.Input == nil || o.Output == nil || o.Load == nil {
 		return fmt.Errorf("trajectory pager requires input, output and data")
 	}
-	restore, err := rawTerminal(o.Input)
+	restore, err := rawTerminal(o.Input, o.Reader != nil)
 	if err != nil {
 		return err
 	}
@@ -53,6 +57,10 @@ func Page(ctx context.Context, o PagerOptions) error {
 	defer func() { _, _ = io.WriteString(o.Output, "\x1b[?25h\x1b[?1049l") }()
 	nextLoad := time.Now().Add(500 * time.Millisecond)
 	dirty := true
+	input := o.Reader
+	if input == nil {
+		input = o.Input
+	}
 	for {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -77,7 +85,7 @@ func Page(ctx context.Context, o PagerOptions) error {
 			dirty = false
 		}
 		var b [32]byte
-		n, readErr := o.Input.Read(b[:])
+		n, readErr := input.Read(b[:])
 		if n > 0 {
 			for _, key := range p.decodeKeys(b[:n]) {
 				if p.handle(key) {
@@ -93,6 +101,9 @@ func Page(ctx context.Context, o PagerOptions) error {
 		}
 		if readErr != nil && readErr != io.EOF {
 			return readErr
+		}
+		if readErr == io.EOF && o.Reader != nil {
+			return nil
 		}
 	}
 }

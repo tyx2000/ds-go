@@ -504,8 +504,18 @@ func (r *Registry) standardBash(ctx context.Context, tc core.ToolContext, raw js
 		r.removeJob(j.id)
 		return result(j.standard.foregroundValue(timeoutMS)), nil
 	case <-timer.C:
-		// The call stops waiting, so a later settlement notifies as usual.
 		j.mu.Lock()
+		select {
+		case <-j.done:
+			// Settlement still owned the foreground waiter. Its completion
+			// notice was suppressed, so this call must deliver the final value.
+			j.mu.Unlock()
+			r.removeJob(j.id)
+			return result(j.standard.foregroundValue(timeoutMS)), nil
+		default:
+		}
+		// Atomically hand this live job to the background before settlement
+		// decides whether an existing waiter owns its final result.
 		j.waiters--
 		j.mu.Unlock()
 		// One consuming read seeds the result; job_output continues after it.
@@ -659,22 +669,36 @@ func (r *Registry) HasPendingJobs(owners ...string) bool {
 // wait is the caller's delivery and sends no notice.
 func (j *job) wait(ctx context.Context, d time.Duration) error {
 	j.mu.Lock()
+	select {
+	case <-j.done:
+		j.mu.Unlock()
+		return nil
+	default:
+	}
 	j.waiters++
 	j.mu.Unlock()
-	defer func() {
-		j.mu.Lock()
-		j.waiters--
-		j.mu.Unlock()
-	}()
 	timer := time.NewTimer(d)
 	defer timer.Stop()
+	var err error
 	select {
 	case <-j.done:
 	case <-timer.C:
 	case <-ctx.Done():
-		return ctx.Err()
+		err = ctx.Err()
 	}
-	return nil
+	j.mu.Lock()
+	j.waiters--
+	select {
+	case <-j.done:
+		// A settlement which released this waiter suppressed its notice.
+		// Deliver its final snapshot even if cancellation/timer also won the
+		// select. The agent still observes cancellation after saving the tool
+		// result; it must not lose both the final value and the notice.
+		err = nil
+	default:
+	}
+	j.mu.Unlock()
+	return err
 }
 
 // requestKill asks a live job to stop. A settled job reports false.

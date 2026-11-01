@@ -29,6 +29,12 @@ type LineOptions struct {
 	// DisplaySubmitted changes only the accepted line left on the screen.
 	// The returned input and editable history retain the original text.
 	DisplaySubmitted func(string) string
+	Draft            *LineDraft // restore an interrupted composer; never entered into history by itself
+}
+
+type LineDraft struct {
+	Text   string
+	Cursor int
 }
 
 type completionMenu struct {
@@ -66,6 +72,8 @@ type LineEditor struct {
 	outputTail                    string
 	defaults                      LineOptions
 	restore                       func()
+	sequenceActive                bool
+	readDeadline                  func(time.Time) error
 }
 
 func NewLineEditor(in *bufio.Reader, tty, out *os.File, write func(string)) *LineEditor {
@@ -97,7 +105,14 @@ func (e *LineEditor) ReadLine() (string, error) {
 func (e *LineEditor) ReadLineWithOptions(options LineOptions) (string, error) {
 	restore, err := lineTerminal(e.tty)
 	if err != nil {
-		return e.in.ReadString('\n')
+		line, readErr := e.in.ReadString('\n')
+		if options.Draft != nil {
+			line = options.Draft.Text + line
+		}
+		e.mu.Lock()
+		e.buf, e.cursor = []rune(line), len([]rune(line))
+		e.mu.Unlock()
+		return line, readErr
 	}
 	e.mu.Lock()
 	e.active, e.buf, e.cursor, e.start, e.row, e.col = true, e.buf[:0], 0, 0, 0, 1
@@ -110,6 +125,11 @@ func (e *LineEditor) ReadLineWithOptions(options LineOptions) (string, error) {
 	if e.query {
 		e.asked++
 		e.write("\x1b[?2004h\x1b[6n")
+	}
+	if options.Draft != nil {
+		e.buf = []rune(options.Draft.Text)
+		e.cursor = min(max(options.Draft.Cursor, 0), len(e.buf))
+		e.renderLocked()
 	}
 	e.mu.Unlock()
 	stopResize := watchLineResize(e.Resize)
@@ -139,6 +159,33 @@ func (e *LineEditor) ReadLineWithOptions(options LineOptions) (string, error) {
 			return line, err
 		}
 	}
+}
+
+// ReadLineWithInput lets the single stdin broker supply a cancellable logical
+// reader without creating another physical terminal reader. Calls are serial.
+func (e *LineEditor) ReadLineWithInput(options LineOptions, input *bufio.Reader, deadlines ...func(time.Time) error) (string, error) {
+	previous := e.in
+	previousDeadline := e.readDeadline
+	e.in = input
+	if len(deadlines) > 0 {
+		e.readDeadline = deadlines[0]
+	}
+	defer func() { e.in, e.readDeadline = previous, previousDeadline }()
+	return e.ReadLineWithOptions(options)
+}
+
+func (e *LineEditor) InputDraft() LineDraft {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return LineDraft{Text: string(e.buf), Cursor: e.cursor}
+}
+
+// Finish a paste/control sequence before suspending its composer. Otherwise
+// bytes from that old sequence could be interpreted as a private answer.
+func (e *LineEditor) CanSuspendRead() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.paste && !e.sequenceActive
 }
 
 func (e *LineEditor) columns() int {
@@ -355,17 +402,25 @@ func (e *LineEditor) escapeByte() (byte, error) {
 	if e.in.Buffered() > 0 {
 		return e.in.ReadByte()
 	}
-	if e.tty == nil {
-		return 0, io.EOF
+	deadline := e.readDeadline
+	if deadline == nil {
+		if e.tty == nil {
+			return 0, io.EOF
+		}
+		deadline = e.tty.SetReadDeadline
 	}
-	if err := e.tty.SetReadDeadline(time.Now().Add(40 * time.Millisecond)); err != nil {
+	if err := deadline(time.Now().Add(40 * time.Millisecond)); err != nil {
 		return 0, err
 	}
-	defer e.tty.SetReadDeadline(time.Time{})
+	defer deadline(time.Time{})
 	return e.in.ReadByte()
 }
 
 func (e *LineEditor) escape() {
+	e.mu.Lock()
+	e.sequenceActive = true
+	e.mu.Unlock()
+	defer func() { e.mu.Lock(); e.sequenceActive = false; e.mu.Unlock() }()
 	next, err := e.escapeByte()
 	if err != nil {
 		e.dismissCompletion()

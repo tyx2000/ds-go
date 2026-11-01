@@ -1,0 +1,38 @@
+package tools
+import (
+ "context"
+ "encoding/json"
+ "testing"
+ "time"
+ "dsgo/internal/core"
+)
+func TestReviewPromotedJobCannotLoseCompletionNotice(t *testing.T) {
+ r:=New();defer r.Close()
+ notices:=make(chan JobNotice,2)
+ r.SetJobNotifier(func(n JobNotice){notices<-n})
+ tc:=core.ToolContext{SessionID:"owner",CWD:t.TempDir(),Permission:"full-access"}
+ type answer struct {res core.ToolResult;err error}
+ result:=make(chan answer,1)
+ go func(){res,err:=r.Execute(context.Background(),tc,"standard_bash",core.JSON(map[string]any{"description":"Produce a boundary result","command":"sleep 0.03; printf completed","timeoutMs":100}));result<-answer{res,err}}()
+ var j *job
+ until:=time.Now().Add(2*time.Second)
+ for j==nil&&time.Now().Before(until){
+  r.mu.RLock();for _,entry:=range r.jobs{j=entry;break};r.mu.RUnlock()
+  if j==nil{time.Sleep(time.Millisecond)}
+ }
+ if j==nil{t.Fatal("job was never registered")}
+ // Hold this real state lock so the already-finished process queues before
+ // the later timeout. On release both production paths run unchanged.
+ j.mu.Lock()
+ time.Sleep(180*time.Millisecond)
+ j.mu.Unlock()
+ var got answer
+ select{case got=<-result:case <-time.After(2*time.Second):t.Fatal("bash caller stuck")}
+ if got.err!=nil{t.Fatal(got.err)}
+ var value struct{Kind string}
+ if err:=json.Unmarshal([]byte(got.res.Content),&value);err!=nil{t.Fatal(err)}
+ <-j.noticed
+ if value.Kind=="promoted" {
+  select{case <-notices:default:t.Fatalf("actual job returned promoted yet settlement suppressed completion notice: %s",got.res.Content)}
+ }
+}

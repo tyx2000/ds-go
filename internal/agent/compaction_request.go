@@ -50,6 +50,10 @@ Rules:
 
 const checkpointPreamble = "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint."
 
+// This is a fallback ceiling for auxiliary output, independent of the space
+// reserved in the context window by compactionHeadroom.
+const defaultCompactionMaxTokens = 65536
+
 // A required post-commit producer (for example the instruction baseline) must
 // not be weakened into the optional summarizer's warn-and-continue behavior.
 type compactionPostCommitError struct{ error }
@@ -110,7 +114,7 @@ func (e *Engine) compactAt(ctx context.Context, id, turn string, messages []core
 	}
 	request.Messages = append(compactionHistory(messages[:cut]), core.TextMessage("user", compactionInstruction))
 	request.SessionID, request.Purpose = id, "compaction"
-	request.MaxTokens, request.Thinking = compactionHeadroom, "off"
+	request.MaxTokens, request.Thinking = e.compactionOutputBudget(request, route), "off"
 	response, err := e.Model.Stream(ctx, request, nil)
 	if err != nil {
 		return fmt.Errorf("context compaction: %w", err)
@@ -189,6 +193,26 @@ func compactionSummary(response core.Response) ([]core.Block, error) {
 	return summary, nil
 }
 
+// Reuse the routed request's known legal output budget. Manual compaction may
+// have only engine options or a catalog default; no known positive cap may be
+// widened by the auxiliary call.
+func (e *Engine) compactionOutputBudget(request core.Request, route ContextRoute) int {
+	budget := request.MaxTokens
+	if budget <= 0 {
+		budget = e.options().MaxTokens
+	}
+	if budget <= 0 {
+		budget = route.DefaultMaxTokens
+	}
+	if budget <= 0 {
+		budget = defaultCompactionMaxTokens
+	}
+	if route.DefaultMaxTokens > 0 {
+		budget = min(budget, route.DefaultMaxTokens)
+	}
+	return min(budget, defaultCompactionMaxTokens)
+}
+
 // Use the actual routed envelope for automatic work. Manual work replays the
 // last logged system/tools, falling back to the current fixed composition.
 func (e *Engine) compactionRequest(ctx context.Context, id string, events []core.Event, target []core.Request) (core.Request, error) {
@@ -206,7 +230,7 @@ func (e *Engine) compactionRequest(ctx context.Context, id string, events []core
 		if json.Unmarshal(events[i].Data, &record) != nil || record.Version != 1 {
 			return core.Request{}, errors.New("invalid compaction request header")
 		}
-		request := core.Request{Provider: record.Header.Provider, Model: record.Header.Model, System: record.System, SystemPromptUpdate: record.Header.SystemPromptUpdate, ToolUpdate: record.Header.ToolUpdate}
+		request := core.Request{Provider: record.Header.Provider, Model: record.Header.Model, MaxTokens: record.Header.MaxTokens, System: record.System, SystemPromptUpdate: record.Header.SystemPromptUpdate, ToolUpdate: record.Header.ToolUpdate}
 		for _, tool := range record.Header.Tools {
 			request.Tools = append(request.Tools, core.ToolSpec{Name: tool.Name, Description: tool.Description, InputSchema: core.JSON(tool.Parameters), DeferLoading: tool.DeferLoading})
 		}
@@ -217,7 +241,7 @@ func (e *Engine) compactionRequest(ctx context.Context, id string, events []core
 		return core.Request{}, err
 	}
 	opts := e.options()
-	request := core.Request{Provider: session.Provider, Model: session.Model, System: opts.System}
+	request := core.Request{Provider: session.Provider, Model: session.Model, System: opts.System, MaxTokens: opts.MaxTokens}
 	if request.Provider == "" {
 		request.Provider = opts.Provider
 	}

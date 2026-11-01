@@ -1,0 +1,16 @@
+?   	dsgo/cmd/dsgo	[no test files]
+ok  	dsgo/internal/agent	9.936s
+ok  	dsgo/internal/artifacts	1.526s
+ok  	dsgo/internal/attachments	10.023s
+ok  	dsgo/internal/cli	35.411s
+ok  	dsgo/internal/context	1.213s
+ok  	dsgo/internal/core	1.131s
+ok  	dsgo/internal/jsonschema	1.148s
+ok  	dsgo/internal/mcp	26.461s
+ok  	dsgo/internal/model	1.544s
+ok  	dsgo/internal/reference	1.340s
+ok  	dsgo/internal/state	6.565s
+ok  	dsgo/internal/timezone	1.223s
+ok  	dsgo/internal/tools	3.710s
+ok  	dsgo/internal/tui	1.586s
+ok  	dsgo/internal/webtools	1.194s
