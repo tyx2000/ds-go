@@ -28,7 +28,35 @@ type fileObservation struct {
 	Version string
 }
 
+// readWatchdog closes a file when the call context is cancelled. Regular
+// reads are not context-aware; closing the descriptor is the only portable
+// way to interrupt a blocked read on a slow/unreliable filesystem.
+type readWatchdog struct {
+	stopCh chan struct{}
+	once   sync.Once
+}
+
+func startReadWatchdog(ctx context.Context, f *os.File) *readWatchdog {
+	w := &readWatchdog{stopCh: make(chan struct{})}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+		case <-w.stopCh:
+		}
+	}()
+	return w
+}
+
+func (w *readWatchdog) stop() { w.once.Do(func() { close(w.stopCh) }) }
+
+type fileLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
 var officialFileLocks sync.Map
+var officialFileLocksMu sync.Mutex
 
 type fileLine struct {
 	Number int    `json:"number"`
@@ -74,10 +102,21 @@ func (r *Registry) observe(owner, path string, v fileObservation) {
 	r.observations[owner][path] = v
 }
 func fileLock(path string) func() {
-	v, _ := officialFileLocks.LoadOrStore(path, &sync.Mutex{})
-	m := v.(*sync.Mutex)
-	m.Lock()
-	return m.Unlock
+	officialFileLocksMu.Lock()
+	v, _ := officialFileLocks.LoadOrStore(path, &fileLockEntry{})
+	entry := v.(*fileLockEntry)
+	entry.refs++
+	officialFileLocksMu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		officialFileLocksMu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			officialFileLocks.Delete(path)
+		}
+		officialFileLocksMu.Unlock()
+	}
 }
 func fileTarget(tc core.ToolContext, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
@@ -99,6 +138,8 @@ func fileVersion(ctx context.Context, path string) (fileObservation, error) {
 		return fileObservation{}, err
 	}
 	defer f.Close()
+	watch := startReadWatchdog(ctx, f)
+	defer watch.stop()
 	h := sha256.New()
 	b := make([]byte, 64<<10)
 	for {
@@ -169,6 +210,8 @@ func (r *Registry) readWindow(ctx context.Context, tc core.ToolContext, raw json
 		return core.ToolResult{}, err
 	}
 	defer f.Close()
+	watch := startReadWatchdog(ctx, f)
+	defer watch.stop()
 	h := sha256.New()
 	reader := bufio.NewReaderSize(io.TeeReader(f, h), 64<<10)
 	value := readValue{Path: path, Offset: offset, Lines: []fileLine{}}
@@ -395,6 +438,8 @@ func readSnapshotAt(ctx context.Context, root *os.Root, path string) ([]byte, fi
 		return nil, fileObservation{}, 0, err
 	}
 	defer f.Close()
+	watch := startReadWatchdog(ctx, f)
+	defer watch.stop()
 	if info.Size() > maxFileBytes {
 		return nil, fileObservation{}, 0, errors.New("file exceeds text mutation size limit")
 	}

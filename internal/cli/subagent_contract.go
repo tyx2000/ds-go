@@ -938,7 +938,21 @@ func (a *App) settleDelegations() error {
 		a.goals.mu.Lock()
 		driving := a.goals.drivers[a.session.ID] != nil
 		a.goals.mu.Unlock()
-		if !driving && !a.engine.Busy(a.session.ID) {
+		// A quiet job notice or an exhausted wake budget commits an inbox
+		// message without starting a turn. One-shot run must consume it (or
+		// fail), otherwise it exits 0 while the model never saw the result.
+		pending, pendingErr := a.engine.PendingInbox(a.session.ID)
+		if pendingErr != nil {
+			err = pendingErr
+			break
+		}
+		if pending && !a.engine.Busy(a.session.ID) && !driving {
+			if err = a.engine.ContinueInbox(ctx, a.session.ID); err != nil {
+				break
+			}
+			continue
+		}
+		if !driving && !a.engine.Busy(a.session.ID) && !pending {
 			break
 		}
 	}

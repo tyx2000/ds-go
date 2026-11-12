@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
+	"time"
 
 	"dsgo/internal/core"
 )
@@ -49,7 +51,43 @@ func Open(root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	pruneRequestImages(p)
 	return &Store{path: p, compression: make(chan struct{}, 2)}, nil
+}
+
+var requestPruneMu sync.Mutex
+var requestPruneAt = map[string]time.Time{}
+
+// request images are a reproducible projection cache, unlike source
+// attachments; old variants can be deleted and re-encoded on demand.
+func pruneRequestImages(root string) {
+	requestPruneMu.Lock()
+	if last, ok := requestPruneAt[root]; ok && time.Since(last) < time.Hour {
+		requestPruneMu.Unlock()
+		return
+	}
+	requestPruneAt[root] = time.Now()
+	requestPruneMu.Unlock()
+	cacheRoot := filepath.Join(root, "request-images-go-v1")
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, shard := range entries {
+		if !shard.IsDir() {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(cacheRoot, shard.Name()))
+		if err != nil {
+			continue
+		}
+		for _, entry := range files {
+			if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(filepath.Join(cacheRoot, shard.Name(), entry.Name()))
+			}
+		}
+	}
 }
 func (s *Store) Put(data []byte, mediaType string) (map[string]any, error) {
 	if len(data) == 0 || len(data) > maxBytes {

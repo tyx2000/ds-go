@@ -10,13 +10,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 )
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var digestScanPattern = regexp.MustCompile(`[0-9a-f]{64}`)
 var spillPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type Store struct{ path string }
@@ -35,7 +40,118 @@ func Open(root string) (*Store, error) {
 			return nil, errors.New("artifact storage requires real directories")
 		}
 	}
+	pruneArtifacts(p)
 	return &Store{path: p}, nil
+}
+
+// DeleteOwner removes retained spill objects that belong to one session.
+// Content-addressed blobs may still be referenced by other sessions and are
+// therefore not removed here.
+func (s *Store) DeleteOwner(session string) error {
+	if session == "" {
+		return errors.New("artifact owner is required")
+	}
+	r, err := os.OpenRoot(s.path)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	entries, err := fs.ReadDir(r.FS(), "spills")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	prefix := ownerKey(session) + "-"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			_ = r.Remove(filepath.Join("spills", entry.Name()))
+		}
+	}
+	return nil
+}
+
+// pruneArtifacts bounds retained output and orphaned blobs. It runs at most
+// once per hour per data root so normal turn latency is unaffected.
+func pruneArtifacts(root string) {
+	pruneMu.Lock()
+	if last, ok := pruneAt[root]; ok && time.Since(last) < time.Hour {
+		pruneMu.Unlock()
+		return
+	}
+	pruneAt[root] = time.Now()
+	pruneMu.Unlock()
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return
+	}
+	defer r.Close()
+	now := time.Now()
+	if entries, err := fs.ReadDir(r.FS(), "spills"); err == nil {
+		cutoff := now.Add(-7 * 24 * time.Hour)
+		for _, entry := range entries {
+			if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = r.Remove(filepath.Join("spills", entry.Name()))
+			}
+		}
+	}
+	// Keep a month of per-turn changes; older turn diffs are no longer useful.
+	// Collect the digests they still reference before pruning orphaned blobs.
+	referenced := map[string]bool{}
+	scanned := int64(0)
+	changesCutoff := now.Add(-30 * 24 * time.Hour)
+	if entries, err := fs.ReadDir(r.FS(), "changes"); err == nil {
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().Before(changesCutoff) {
+				_ = r.Remove(filepath.Join("changes", entry.Name()))
+				continue
+			}
+			if scanned > 256<<20 {
+				return
+			}
+			b, err := readArtifact(r, filepath.Join("changes", entry.Name()))
+			if err != nil {
+				continue
+			}
+			scanned += int64(len(b))
+			for _, digest := range digestScanPattern.FindAll(b, -1) {
+				referenced[string(digest)] = true
+				if len(referenced) > 2_000_000 {
+					return
+				}
+			}
+		}
+	}
+	if entries, err := fs.ReadDir(r.FS(), "blobs"); err == nil {
+		blobCutoff := now.Add(-30 * 24 * time.Hour)
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil || !info.ModTime().Before(blobCutoff) {
+				continue
+			}
+			if !referenced[entry.Name()] {
+				_ = r.Remove(filepath.Join("blobs", entry.Name()))
+			}
+		}
+	}
+}
+
+var pruneMu sync.Mutex
+var pruneAt = map[string]time.Time{}
+
+func readArtifact(r *os.Root, name string) ([]byte, error) {
+	info, err := r.Lstat(name)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<20 {
+		return nil, errors.New("invalid artifact object")
+	}
+	f, err := r.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, 64<<20))
 }
 
 func (s *Store) write(name string, data []byte, replace bool) error {
@@ -44,6 +160,19 @@ func (s *Store) write(name string, data []byte, replace bool) error {
 		return err
 	}
 	defer r.Close()
+	if !replace {
+		// A content-addressed target is immutable. Check the existing object
+		// before staging and fsyncing the same bytes again: workspace captures
+		// hit an existing blob for almost every unchanged file.
+		if existing, e := s.read(name, int64(len(data))+1); e == nil {
+			if string(existing) != string(data) {
+				return errors.New("artifact digest collision or corrupted object")
+			}
+			return nil
+		} else if !errors.Is(e, os.ErrNotExist) {
+			return e
+		}
+	}
 	var nonce [16]byte
 	if _, err = rand.Read(nonce[:]); err != nil {
 		return err
@@ -63,17 +192,6 @@ func (s *Store) write(name string, data []byte, replace bool) error {
 	}
 	if err != nil {
 		return err
-	}
-	if !replace {
-		// A content-addressed target is immutable. Reuse only verified bytes.
-		if existing, e := s.read(name, int64(len(data))+1); e == nil {
-			if string(existing) != string(data) {
-				return errors.New("artifact digest collision or corrupted object")
-			}
-			return nil
-		} else if !errors.Is(e, os.ErrNotExist) {
-			return e
-		}
 	}
 	if err = r.Rename(tmp, name); err != nil {
 		return err

@@ -312,10 +312,19 @@ func (s *Supervisor) run(initialError error) {
 				s.connectedAt = time.Time{}
 				s.mu.Unlock()
 				if closeErr := client.Close(); closeErr != nil {
-					err = errors.Join(err, ErrIncompleteClose, closeErr)
+					// Only a stdio child process can still be running after a
+					// failed close; that is the case ErrIncompleteClose guards.
+					// HTTP session termination is best effort (DELETE may be
+					// unsupported, or the server may already be gone), so it
+					// must not stop reconnection or configuration reloads.
 					s.mu.Lock()
 					s.closeError = errors.Join(s.closeError, closeErr)
 					s.mu.Unlock()
+					if client.http == nil {
+						err = errors.Join(err, ErrIncompleteClose, closeErr)
+					} else {
+						s.log("MCP HTTP session close was incomplete: " + closeErr.Error())
+					}
 				}
 				if !up.IsZero() && time.Since(up) >= s.policy.MaxDelay {
 					s.mu.Lock()

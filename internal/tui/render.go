@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"dsgo/internal/core"
 )
@@ -12,7 +13,7 @@ import (
 func Outline(t Transcript) []string {
 	out := []string{"Turn outline"}
 	for _, turn := range t.Turns {
-		out = append(out, fmt.Sprintf("%3d  %-11s %s  %s", turn.Number, turn.Status, shortID(turn.ID), Safe(turn.Title)))
+		out = append(out, fmt.Sprintf("%3d  %-11s %s  %s", turn.Number, turn.Status, shortID(turn.ID), Safe(MaskSentUserText(turn.Title))))
 	}
 	if len(t.Turns) == 0 {
 		out = append(out, "No recorded turns.")
@@ -32,7 +33,7 @@ func Ledger(t Transcript, turn int) []string {
 				out = append(out, "Between turns")
 			} else {
 				tr := t.Turns[r.Turn-1]
-				out = append(out, fmt.Sprintf("Turn %d · %s · %s", tr.Number, tr.Status, Safe(tr.Title)))
+				out = append(out, fmt.Sprintf("Turn %d · %s · %s", tr.Number, tr.Status, Safe(MaskSentUserText(tr.Title))))
 			}
 		}
 		out = append(out, RecordLine(r))
@@ -50,6 +51,9 @@ func RecordLine(r Record) string {
 	label := r.Name
 	if label == "" {
 		label = r.Text
+	}
+	if r.Kind == "user" {
+		label = MaskSentUserText(label)
 	}
 	label = clip(strings.Join(strings.Fields(Safe(label)), " "), 100)
 	duration := "—"
@@ -138,7 +142,13 @@ func inspectRecord(r Record, tab string, revealed map[string]bool) []string {
 			out = append(out, "", attachmentSummary(r.Images, r.Files), "Attachment metadata is available in Raw.")
 		}
 		out = append(out, "", "Input")
-		out = append(out, prettyLines(r.Input)...)
+		inputLines := prettyLines(r.Input)
+		if r.Kind == "user" {
+			for i := range inputLines {
+				inputLines[i] = MaskSentUserText(inputLines[i])
+			}
+		}
+		out = append(out, inputLines...)
 		out = append(out, "", "Output")
 		out = append(out, prettyLines(r.Output)...)
 	}
@@ -194,32 +204,91 @@ func Wrap(lines []string, width int) []string {
 		var part strings.Builder
 		col := 0
 		flush := func() { out = append(out, part.String()); part.Reset(); col = 0 }
-		for _, r := range line {
+		runes := []rune(line)
+		for i := 0; i < len(runes); {
+			r := runes[i]
 			if r == '\n' {
 				flush()
+				i++
 				continue
 			}
 			if r == '\t' {
 				spaces := 4 - col%4
-				for i := 0; i < spaces; i++ {
+				for n := 0; n < spaces; n++ {
 					if col >= width {
 						flush()
 					}
 					part.WriteByte(' ')
 					col++
 				}
+				i++
 				continue
 			}
-			w := runeWidth(r)
+			end := clusterEnd(runes, i)
+			w := clusterWidth(runes[i:end])
 			if col+w > width && col > 0 {
 				flush()
 			}
-			part.WriteRune(r)
+			part.WriteString(string(runes[i:end]))
 			col += w
+			i = end
 		}
 		flush()
 	}
 	return out
+}
+
+func isRegionalIndicator(r rune) bool { return r >= 0x1F1E6 && r <= 0x1F1FF }
+
+func isClusterExtend(r rune) bool {
+	if (r >= 0xFE00 && r <= 0xFE0F) || (r >= 0xE0100 && r <= 0xE01EF) || r == 0x200C || r == 0x200D {
+		return true
+	}
+	if r >= 0x1F3FB && r <= 0x1F3FF || r == 0x20E3 {
+		return true
+	}
+	return unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) || unicode.Is(unicode.Me, r)
+}
+
+// clusterEnd returns the end of one user-perceived character: base rune plus
+// combining marks, variation selectors, ZWJ sequences, skin tones and flags.
+func clusterEnd(text []rune, start int) int {
+	i := start + 1
+	if isRegionalIndicator(text[start]) && i < len(text) && isRegionalIndicator(text[i]) {
+		return i + 1
+	}
+	for i < len(text) {
+		if isClusterExtend(text[i]) && text[i] != 0x200D && text[i] != 0x200C {
+			i++
+			continue
+		}
+		if text[i] == 0x200D || text[i] == 0x200C {
+			i++
+			if i < len(text) {
+				i++
+			}
+			continue
+		}
+		break
+	}
+	return i
+}
+
+func clusterWidth(cluster []rune) int {
+	if len(cluster) == 0 {
+		return 0
+	}
+	wide := false
+	for _, r := range cluster {
+		if isRegionalIndicator(r) || runeWidth(r) == 2 || r == 0x20E3 {
+			wide = true
+			break
+		}
+	}
+	if wide {
+		return 2
+	}
+	return runeWidth(cluster[0])
 }
 
 // Terminals commonly render East Asian characters and emoji as two cells.

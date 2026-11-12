@@ -24,6 +24,37 @@ var workspaceCaptures sync.Map
 
 func (a *App) artifactStore() (*artifacts.Store, error) { return artifacts.Open(a.store.Root()) }
 
+func (a *App) cachedWorkspaceSnapshot(session string) *artifacts.Snapshot {
+	if session == "" {
+		return nil
+	}
+	a.workspaceMu.Lock()
+	defer a.workspaceMu.Unlock()
+	snapshot, ok := a.workspaceCaches[session]
+	if !ok {
+		return nil
+	}
+	return &snapshot
+}
+
+func (a *App) cacheWorkspaceSnapshot(session string, snapshot artifacts.Snapshot) {
+	if session == "" || len(snapshot.Files) > 50000 {
+		return
+	}
+	a.workspaceMu.Lock()
+	defer a.workspaceMu.Unlock()
+	if a.workspaceCaches == nil {
+		a.workspaceCaches = map[string]artifacts.Snapshot{}
+	}
+	for key := range a.workspaceCaches {
+		if key != session && len(a.workspaceCaches) >= 4 {
+			delete(a.workspaceCaches, key)
+			break
+		}
+	}
+	a.workspaceCaches[session] = snapshot
+}
+
 func (a *App) artifactWarning(err error) {
 	if a.err == nil {
 		return
@@ -62,7 +93,7 @@ func (a *App) workspaceTurnStarted(ctx context.Context, session core.Session, tu
 	}
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	before, err := s.Capture(bounded, session.CWD)
+	before, err := s.CaptureWith(bounded, session.CWD, a.cachedWorkspaceSnapshot(session.ID))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -71,6 +102,7 @@ func (a *App) workspaceTurnStarted(ctx context.Context, session core.Session, tu
 		return nil
 	}
 	workspaceCaptures.Store(workspaceCaptureKey{a, session.ID, turnID}, before)
+	a.cacheWorkspaceSnapshot(session.ID, before)
 	return nil
 }
 func (a *App) workspaceTurnFinished(ctx context.Context, session core.Session, turnID string) error {
@@ -86,16 +118,18 @@ func (a *App) workspaceTurnFinished(ctx context.Context, session core.Session, t
 	}
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	after, err := s.Capture(bounded, session.CWD)
+	before, _ := value.(artifacts.Snapshot)
+	after, err := s.CaptureWith(bounded, session.CWD, &before)
 	if err != nil {
 		a.artifactWarning(err)
 		return nil
 	}
+	a.cacheWorkspaceSnapshot(session.ID, after)
 	turn, err := a.artifactTurn(session.ID, turnID)
 	if err != nil {
 		return err
 	}
-	changes, err := s.Compare(bounded, value.(artifacts.Snapshot), after, turn)
+	changes, err := s.Compare(bounded, before, after, turn)
 	if err != nil {
 		a.artifactWarning(err)
 		return nil

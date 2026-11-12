@@ -69,22 +69,23 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 		return result, err
 	}
 	defer release()
+	a.interactionLine("\n[%s]\n", a.interactionOrigin(tc.SessionID))
 	for _, q := range questions {
 		if q.Header != "" {
-			a.line("\n%s\n", clean(q.Header))
+			a.interactionLine("\n%s\n", clean(q.Header))
 		}
 		if q.Detail != "" {
-			a.line("\n%s\n", clean(q.Detail))
+			a.interactionLine("\n%s\n", clean(q.Detail))
 		}
-		a.line("\n%s\n", clean(q.Question))
+		a.interactionLine("\n%s\n", clean(q.Question))
 		for i, option := range q.Options {
-			a.line("  %d. %s\n", i+1, clean(option.Label))
+			a.interactionLine("  %d. %s\n", i+1, clean(option.Label))
 			if option.Description != "" {
-				a.line("     %s\n", clean(option.Description))
+				a.interactionLine("     %s\n", clean(option.Description))
 			}
 		}
 		if len(q.Options) > 0 {
-			a.line("  %d. Other (enter your own answer)\n", len(q.Options)+1)
+			a.interactionLine("  %d. Other (enter your own answer)\n", len(q.Options)+1)
 		}
 		prompt := "Answer: "
 		if len(q.Options) > 0 {
@@ -94,7 +95,7 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 			}
 		}
 		for {
-			a.line("%s", prompt)
+			a.interactionLine("%s", prompt)
 			text, err := a.readPrivateLine(ctx, prompt)
 			if err != nil {
 				return result, err
@@ -109,7 +110,7 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 			}
 			if other {
 				const customPrompt = "Other answer: "
-				a.line("%s", customPrompt)
+				a.interactionLine("%s", customPrompt)
 				custom, err := a.readPrivateLine(ctx, customPrompt)
 				if err != nil {
 					return result, err
@@ -129,14 +130,6 @@ func (a *App) askQuestions(ctx context.Context, tc core.ToolContext, questions [
 		}
 	}
 	return result, nil
-}
-
-func parseQuestionAnswer(q userQuestion, text string) (userAnswer, error) {
-	answer, other, err := parseQuestionChoice(q, text)
-	if err == nil && other {
-		err = errors.New("the Other choice requires a separate answer")
-	}
-	return answer, err
 }
 
 // Other is an explicit additional choice. Its text is read separately so every

@@ -238,6 +238,13 @@ func (c *Client) Stderr() string                     { return c.stderr.String() 
 func (c *Client) Done() <-chan struct{}              { return c.done }
 func (c *Client) Err() error                         { c.mu.Lock(); defer c.mu.Unlock(); return c.terminalError }
 
+func (c *Client) warn(message string) {
+	select {
+	case c.warnings <- message:
+	default:
+	}
+}
+
 func (c *Client) fail(err error) {
 	c.doneOnce.Do(func() {
 		if c.cancel != nil {
@@ -710,7 +717,10 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 func (c *Client) callToolChecked(ctx context.Context, name string, args json.RawMessage, output *jsonschema.Schema, required bool, compileError error) (ToolResult, error) {
 	var result ToolResult
 	if compileError != nil {
-		return result, compileError
+		// Output validation is advisory. A server that publishes a schema
+		// dialect this client cannot compile must still be callable; skip
+		// validation instead of disabling the tool.
+		output = nil
 	}
 	if required {
 		return result, errors.New("MCP tool requires task-based execution; the official bridge does not support this extension")

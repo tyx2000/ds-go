@@ -75,6 +75,18 @@ func (r *Registry) SetSpillDir(dir string) {
 	r.mu.Lock()
 	r.spillDir = dir
 	r.mu.Unlock()
+	// Bound shell output retained before this process started; the registry
+	// only deletes files it owns, by age.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, entry := range entries {
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, entry.Name()))
+		}
+	}
 }
 
 // streamCapture keeps the tail of one stream in memory and, after the first
@@ -145,6 +157,15 @@ func (s *streamCapture) dropSpill() {
 		_ = os.Remove(s.spillPath)
 	}
 	s.spill, s.spillPath, s.failed = nil, "", true
+}
+
+func (s *streamCapture) removeSpill() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.spillPath != "" {
+		_ = os.Remove(s.spillPath)
+		s.spillPath = ""
+	}
 }
 
 func (s *streamCapture) close() {
@@ -330,7 +351,11 @@ func (s *standardBashState) consume() string {
 			}
 		}
 		where := "(unavailable)"
-		if len(paths) > 0 {
+		if !final {
+			// A running stream can still revoke its spill file when it
+			// exceeds the cap; do not advertise a path that may disappear.
+			where = "(the stream is still running; read it again after it settles)"
+		} else if len(paths) > 0 {
 			where = strings.Join(paths, ", ")
 		}
 		body = appendLine(body, "[some output was dropped from memory; full output: "+where+"]")
@@ -388,12 +413,23 @@ func dsgoMode(mode string) string {
 // Denials are inferred from a failed run's stderr in the selected backend's
 // dialect: EPERM under Seatbelt, EROFS under bubblewrap's read-only binds.
 func deniedBySandbox(backend, stderr string) bool {
-	s := strings.ToLower(stderr)
+	suffix := ""
 	switch backend {
 	case "macos-seatbelt":
-		return strings.Contains(s, "operation not permitted")
+		suffix = ": operation not permitted"
 	case "linux-bubblewrap":
-		return strings.Contains(s, "read-only file system")
+		suffix = ": read-only file system"
+	default:
+		return false
+	}
+	for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
+		line = strings.TrimSpace(line)
+		// Kernel diagnostics look like "cmd: path: Operation not permitted".
+		// Requiring the trailing shape avoids treating arbitrary command
+		// output that merely mentions the phrase as a sandbox decision.
+		if strings.HasSuffix(line, suffix) && strings.Count(line, ":") >= 2 {
+			return true
+		}
 	}
 	return false
 }
@@ -478,6 +514,11 @@ func (r *Registry) standardBash(ctx context.Context, tc core.ToolContext, raw js
 	if err != nil {
 		return core.ToolResult{}, err
 	}
+	// Capture the immutable workspace before workdir may replace CWD; a model
+	// supplied workdir must never become the sandbox's writable root.
+	if tc.WorkspaceRoot == "" {
+		tc.WorkspaceRoot = workspaceRoot(tc)
+	}
 	workdir := tc.CWD
 	if a.Workdir != nil {
 		workdir = *a.Workdir
@@ -522,7 +563,12 @@ func (r *Registry) standardBash(ctx context.Context, tc core.ToolContext, raw js
 		return result(map[string]any{"kind": "promoted", "cwd": tc.CWD, "jobId": j.id, "timeoutMs": timeoutMS, "output": j.standard.consume()}), nil
 	case <-ctx.Done():
 		j.requestKill("tool call aborted")
-		<-j.done
+		select {
+		case <-j.done:
+		case <-time.After(5 * time.Second):
+			// The process did not settle. Leave the record for job_kill and
+			// return cancellation instead of blocking the turn forever.
+		}
 		r.removeJob(j.id)
 		return core.ToolResult{}, ctx.Err()
 	}
@@ -571,10 +617,12 @@ func (r *Registry) startStandardBash(tc core.ToolContext, a standardBashArgs, mo
 		return nil, errors.New("registry closed")
 	}
 	r.jobs[j.id] = j
+	r.pruneJobsLocked(tc.SessionID)
 	r.mu.Unlock()
 	go func() {
 		err := sc.cmd.Wait()
-		terminateProcess(sc.cmd)
+		// The process group was killed by cmd.Cancel on cancellation. A
+		// second kill(-pid) after Wait can hit a recycled pgid.
 		sc.cleanup()
 		cancel()
 		st.stdout.close()
@@ -600,6 +648,43 @@ func (r *Registry) removeJob(id string) {
 	r.mu.Lock()
 	delete(r.jobs, id)
 	r.mu.Unlock()
+}
+
+// pruneJobsLocked bounds completed job history and its spill files. Running
+// jobs are never pruned; a session can keep at most completedJobLimit records.
+func (r *Registry) pruneJobsLocked(owner string) {
+	const completedJobLimit = 32
+	var done []*job
+	for _, j := range r.jobs {
+		if j.owner == owner && j.standard != nil && j.standard.settled() {
+			done = append(done, j)
+		}
+	}
+	if len(done) <= completedJobLimit {
+		return
+	}
+	sort.Slice(done, func(i, k int) bool { return done[i].started.Before(done[k].started) })
+	for _, j := range done[:len(done)-completedJobLimit] {
+		j.standard.stdout.removeSpill()
+		j.standard.stderr.removeSpill()
+		delete(r.jobs, j.id)
+	}
+}
+
+// removeJobSpills removes retained output files owned by a closing registry.
+func (r *Registry) removeJobSpills() {
+	r.mu.RLock()
+	jobs := make([]*job, 0, len(r.jobs))
+	for _, j := range r.jobs {
+		jobs = append(jobs, j)
+	}
+	r.mu.RUnlock()
+	for _, j := range jobs {
+		if j.standard != nil {
+			j.standard.stdout.removeSpill()
+			j.standard.stderr.removeSpill()
+		}
+	}
 }
 
 // JobNotice is an owned job's completion notice in the official tool-jobs wording.

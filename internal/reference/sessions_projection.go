@@ -44,50 +44,69 @@ func (s Sessions) capture(ctx context.Context, input SessionInput) (ReferencedSe
 			return
 		}
 		text := sessionText(message.Content)
-		if text != "" {
-			items = append(items, sessionProjectedItem{SessionConversationItem: SessionConversationItem{Role: message.Role, Text: text}, checkpoint: checkpoint, originalText: text})
+		if text == "" {
+			return
+		}
+		// dsgo's synthetic acknowledgement is not a referenced message.
+		if message.Role == "assistant" && text == "I will continue using this summary and the following recent history." {
+			return
+		}
+		items = append(items, sessionProjectedItem{SessionConversationItem: SessionConversationItem{Role: message.Role, Text: text}, checkpoint: checkpoint, originalText: text})
+	}
+	// Project the current model-visible surface, including native compaction
+	// (context/replace) and pruning, instead of replaying superseded events.
+	nodes, err := core.ContextSurface(events)
+	if err != nil {
+		return data, nil, err
+	}
+	lastCompaction, legacyCompaction := int64(0), false
+	originTypes := make(map[int64]string, len(events))
+	for _, event := range events {
+		originTypes[event.Seq] = event.Type
+		if event.Type == "context/compacted" || event.Type == "context/replace" {
+			lastCompaction, legacyCompaction = event.Seq, event.Type == "context/compacted"
 		}
 	}
-	for _, event := range events {
+	for _, node := range nodes {
 		if err := sessionCancelled(ctx); err != nil {
 			return data, nil, err
 		}
-		switch event.Type {
-		case "user/input":
-			messages, recognized, err := core.UserInputMessages(event)
-			if err != nil || !recognized || len(messages) == 0 {
-				if err == nil {
-					err = fmt.Errorf("invalid stored input batch")
-				}
-				return data, nil, err
-			}
-			appendMessage(messages[0], isSessionCheckpoint(messages[0].Source))
-		case "user/message", "assistant/message":
-			var message core.Message
-			if err := json.Unmarshal(event.Data, &message); err != nil {
-				return data, nil, err
-			}
-			appendMessage(message, isSessionCheckpoint(message.Source))
-		case "context/compacted":
-			var compacted struct {
-				Messages []core.Message `json:"messages"`
-			}
-			if err := json.Unmarshal(event.Data, &compacted); err != nil {
-				return data, nil, err
-			}
-			items = nil // only the current compacted surface is referenced
-			for i, message := range compacted.Messages {
-				if i == 1 && message.Role == "assistant" && sessionText(message.Content) == "I will continue using this summary and the following recent history." {
-					continue // dsgo's synthetic compaction acknowledgement
-				}
-				appendMessage(message, i == 0 && message.Role == "user" || isSessionCheckpoint(message.Source))
-			}
+		// Captured contexts in an input batch and tool-result batches are not
+		// conversation authored by the source session's user. For compaction
+		// events Part is just the position in the replacement, not a capture.
+		originType := originTypes[node.Origin.Seq]
+		if originType == "user/input" && node.Origin.Part > 0 {
+			continue
 		}
+		switch originType {
+		case "user/input", "user/message", "assistant/message", "context/compacted", "context/replace":
+		default:
+			continue
+		}
+		if messageHasToolResult(node.Message) {
+			continue
+		}
+		checkpoint := isSessionCheckpoint(node.Message.Source)
+		if !checkpoint && legacyCompaction && node.Origin.Seq == lastCompaction && node.Origin.Part == 0 && node.Message.Role == "user" {
+			// Legacy context/compacted payloads may not carry the marker on
+			// their first message.
+			checkpoint = true
+		}
+		appendMessage(node.Message, checkpoint)
 	}
 	for _, item := range items {
 		data.Conversation = append(data.Conversation, item.SessionConversationItem)
 	}
 	return data, items, nil
+}
+
+func messageHasToolResult(message core.Message) bool {
+	for _, block := range message.Content {
+		if block.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
 }
 
 func isSessionCheckpoint(source any) bool {
@@ -132,12 +151,29 @@ func retainSession(full ReferencedSessionData, original []sessionProjectedItem, 
 		}
 		return preview
 	}
-	size := func() int { return len(sessionTagSafeJSON(data())) }
+	// Size the retained array incrementally. Re-marshalling the whole
+	// conversation for every dropped message made a long reference quadratic
+	// and could block input admission for seconds.
+	empty := full
+	empty.Conversation = []SessionConversationItem{}
+	overhead := len(sessionTagSafeJSON(empty))
+	itemSizes := make([]int, len(retained))
+	total := overhead
+	for i, item := range retained {
+		itemSizes[i] = len(sessionTagSafeJSON(item.SessionConversationItem))
+		total += itemSizes[i]
+		if i > 0 {
+			total++ // separating comma
+		}
+	}
+	kept := make([]sessionProjectedItem, 0, len(retained))
+	kept = append(kept, retained...)
+	keptSizes := append([]int(nil), itemSizes...)
 	droppedBytes := 0
-	for size() > maxBytes {
+	for total > maxBytes {
 		drop := -1
-		for i, item := range retained {
-			if !item.checkpoint && i != len(retained)-1 {
+		for i := range kept {
+			if !kept[i].checkpoint && i != len(kept)-1 {
 				drop = i
 				break
 			}
@@ -146,9 +182,16 @@ func retainSession(full ReferencedSessionData, original []sessionProjectedItem, 
 			break
 		}
 		stats.OmittedMessages++
-		droppedBytes += len(retained[drop].originalText)
-		retained = append(retained[:drop], retained[drop+1:]...)
+		droppedBytes += len(kept[drop].originalText)
+		total -= keptSizes[drop]
+		if len(kept) > 1 {
+			total-- // separating comma
+		}
+		kept = append(kept[:drop], kept[drop+1:]...)
+		keptSizes = append(keptSizes[:drop], keptSizes[drop+1:]...)
 	}
+	retained = kept
+	size := func() int { return len(sessionTagSafeJSON(data())) }
 	for size() > maxBytes {
 		longest, longestBytes := -1, 0
 		for i, item := range retained {

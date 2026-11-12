@@ -308,3 +308,30 @@ func TestSessionCandidatesUseMetadataAndWorkspaceAffinity(t *testing.T) {
 		t.Fatalf("display-title query: %+v %v", rows, err)
 	}
 }
+
+func TestSessionReferenceProjectsNativeContextReplacement(t *testing.T) {
+	store, resolver := newReferenceSessions()
+	store.append("source", "user/message", core.TextMessage("user", "old question"))
+	store.append("source", "assistant/message", core.TextMessage("assistant", "old answer"))
+	checkpoint := core.TextMessage("user", "CURRENT COMPACTION SUMMARY")
+	checkpoint.Source = map[string]any{"kind": "compact-checkpoint"}
+	store.append("source", "context/replace", core.ContextReplacement{
+		Version: 1,
+		Expected: []core.ContextOrigin{
+			{Seq: 1}, {Seq: 2},
+		},
+		Start: 0, End: 2, Messages: []core.Message{checkpoint},
+	})
+	store.append("source", "user/message", core.TextMessage("user", "next request"))
+	prepared, err := resolver.Prepare(context.Background(), "target", core.TextMessage("user", EncodeSessionURI("source")))
+	if err != nil || len(prepared.Contexts) != 1 {
+		t.Fatalf("prepare: %v", err)
+	}
+	text := prepared.Contexts[0].Content[0].Text
+	if !strings.Contains(text, "CURRENT COMPACTION SUMMARY") || !strings.Contains(text, "next request") {
+		t.Fatalf("current surface missing: %s", text)
+	}
+	if strings.Contains(text, "old question") || strings.Contains(text, "old answer") {
+		t.Fatalf("superseded context leaked: %s", text)
+	}
+}

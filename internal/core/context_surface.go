@@ -170,6 +170,18 @@ func ContextSurface(events []Event) ([]ContextNode, error) {
 				next = append(next, ContextNode{Origin: ContextOrigin{event.Seq, part}, Message: message})
 			}
 			nodes = append(next, nodes[replacement.End:]...)
+		default:
+			// Unknown operational events are ignored for forward compatibility.
+			// An unknown event whose payload looks like a message is different:
+			// silently dropping it would hide conversation content, so fail
+			// loudly instead of projecting an incomplete surface.
+			var probe struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			}
+			if json.Unmarshal(event.Data, &probe) == nil && probe.Role != "" && len(probe.Content) > 0 {
+				return nil, fmt.Errorf("unknown message-bearing event %q at seq %d", event.Type, event.Seq)
+			}
 		}
 	}
 	return nodes, nil
@@ -230,10 +242,15 @@ func directContextInput(message Message) bool {
 			return false
 		}
 	}
+	// Use an allow list, not an exclusion list: generated notices and future
+	// message kinds must default to "not a new human input". Otherwise the
+	// latest notification (working-directory, repeat reminder, goal notice)
+	// becomes the compaction boundary and the real current request is
+	// summarized away.
 	switch contextSourceKind(message) {
-	case "plan-mode", "time-context", "agent-instructions", "compact-checkpoint", "session-reference", "file-reference":
-		return false
-	default:
+	case "", "user", "goal", "agent", "schedule", "tool-jobs", "subagent":
 		return true
+	default:
+		return false
 	}
 }

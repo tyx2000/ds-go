@@ -397,6 +397,18 @@ func (p *pager) decodeKeys(input []byte) []string {
 				p.key = p.key[end+1:]
 				continue
 			}
+			if p.key[1] == 'O' {
+				// SS3 cursor keys (application cursor mode).
+				if len(p.key) < 3 {
+					break
+				}
+				key := map[byte]string{'A': "up", 'B': "down", 'C': "right", 'D': "left", 'H': "home", 'F': "end"}[p.key[2]]
+				if key != "" {
+					out = append(out, key)
+				}
+				p.key = p.key[3:]
+				continue
+			}
 			out = append(out, "escape")
 			p.key = p.key[1:]
 			continue

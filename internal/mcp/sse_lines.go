@@ -27,6 +27,9 @@ func readSSELines(input io.Reader, emit func([]byte) error) error {
 		}
 		skipLF = false
 		if b != '\r' && b != '\n' {
+			if len(line) >= maxSSELineBytes {
+				return errors.New("MCP SSE line exceeds the size limit")
+			}
 			line = append(line, b)
 			continue
 		}
@@ -35,7 +38,16 @@ func readSSELines(input io.Reader, emit func([]byte) error) error {
 			// establishes whether it is CRLF; EOF has no consume/flush hook.
 			if _, err := r.Peek(1); err != nil {
 				if errors.Is(err, io.EOF) {
-					return nil
+					// A trailing CR still terminates the current (possibly
+					// empty) line. Flushing it lets a complete event whose
+					// final blank line ends in CR be delivered.
+					if first {
+						line = bytes.TrimPrefix(line, []byte{0xef, 0xbb, 0xbf})
+					}
+					if len(line) > maxSSELineBytes {
+						return errors.New("MCP SSE line exceeds the size limit")
+					}
+					return emit(line)
 				}
 				return err
 			}

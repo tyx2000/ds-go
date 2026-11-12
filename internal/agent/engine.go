@@ -385,10 +385,10 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		timingMu.Lock()
 		timing := map[string]any{"step": step + 1, "started_at": requestStarted, "completed_at": time.Now(), "first_token_at": firstToken, "last_token_at": lastToken}
 		timingMu.Unlock()
-		if timingErr := appendEvent("step/timing", timing); timingErr != nil {
-			return errors.Join(x, timingErr)
-		}
 		if x != nil {
+			if timingErr := appendEvent("step/timing", timing); timingErr != nil {
+				return errors.Join(x, timingErr)
+			}
 			if logErr := appendEvent("assistant/attempt", map[string]any{"response": response, "error": x.Error()}); logErr != nil {
 				return errors.Join(x, logErr)
 			}
@@ -415,7 +415,6 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 			}
 			return x
 		}
-		overflowRetries = 0
 		if len(response.Content) == 0 {
 			return errors.New("model returned an empty response")
 		}
@@ -425,6 +424,11 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 		}
 		if err = appendEvent("step/usage", response.Usage); err != nil {
 			return err
+		}
+		// Timing is auxiliary telemetry: a failed write must not turn a
+		// successfully billed response into a lost turn that gets retried.
+		if timingErr := appendEvent("step/timing", timing); timingErr != nil {
+			e.emit(id, "warning", map[string]any{"phase": "step-timing", "message": "step timing audit failed", "error": timingErr.Error()})
 		}
 		calls := []core.Block{}
 		for _, b := range response.Content {
@@ -494,21 +498,27 @@ func (e *Engine) run(ctx context.Context, id string, input *core.Message) (err e
 				result.Content = toolErr.Error()
 			}
 			if opts.RenderToolResult != nil {
-				result, toolErr = opts.RenderToolResult(ctx, tc, call.Name, result)
-				if toolErr != nil {
-					return toolErr
+				rendered, renderErr := opts.RenderToolResult(ctx, tc, call.Name, result)
+				if renderErr != nil {
+					// The tool already ran; losing its result would make the
+					// next turn believe the process crashed and repeat a write.
+					result.IsError = true
+					result.Blocks = nil
+					result.Content = "tool result rendering failed: " + renderErr.Error()
+				} else {
+					result = rendered
 				}
 			}
 			emitMu.Lock()
-			err = emitErr
+			callErr := emitErr
 			emitMu.Unlock()
-			if err != nil {
-				return err
+			e.endToolExecution(tc)
+			if callErr != nil {
+				return callErr
 			}
 			if err = appendEvent("tool/finished", map[string]any{"id": call.ID, "name": call.Name, "result": result}); err != nil {
 				return err
 			}
-			e.endToolExecution(tc)
 			e.emit(id, "tool_finished", map[string]any{"name": call.Name, "result": result})
 			var content any = result.Content
 			if len(result.Blocks) > 0 {

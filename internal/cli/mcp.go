@@ -25,13 +25,23 @@ func (a *App) mcpApprove(ctx context.Context, tc core.ToolContext, name string, 
 		}
 	}
 	ok, err := tc.Approve(ctx, q)
+	// Always settle the audit record, including cancellation, and use the
+	// same event name as built-in tools so consumers need one matcher.
+	decisionErr := err
 	if ctx.Err() != nil {
-		return ctx.Err()
+		decisionErr = ctx.Err()
 	}
 	if tc.Emit != nil {
-		if logErr := tc.Emit("approval/resolved", map[string]any{"id": q.ID, "allowed": ok && err == nil}); logErr != nil {
+		message := ""
+		if decisionErr != nil {
+			message = decisionErr.Error()
+		}
+		if logErr := tc.Emit("approval/settled", map[string]any{"id": q.ID, "allowed": ok && err == nil && ctx.Err() == nil, "error": message}); logErr != nil {
 			return logErr
 		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if err != nil {
 		return err

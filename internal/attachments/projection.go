@@ -242,6 +242,15 @@ func (r projectedModel) blocks(ctx context.Context, req core.Request, blocks []c
 			if durable && plan.Target != nil {
 				version, err := r.store.RequestImage(ctx, ref, *plan.Target)
 				if err != nil {
+					// A missing thumbnail encoder must not poison the whole
+					// conversation: the handle text (when present) already
+					// tells the model the image exists but cannot be shown.
+					if isImageCodecFailure(err) {
+						if plan.Text == "" {
+							out = append(out, core.Block{Type: "text", Text: TextOnlyImageHandle(ref)})
+						}
+						continue
+					}
 					return nil, err
 				}
 				block.Source = map[string]any{"type": "base64", "media_type": version.MediaType, "data": base64.StdEncoding.EncodeToString(version.Data)}
@@ -269,6 +278,11 @@ func (r projectedModel) blocks(ctx context.Context, req core.Request, blocks []c
 	}
 	return out, nil
 }
+func isImageCodecFailure(err error) bool {
+	var failure *ImageError
+	return errors.As(err, &failure) && strings.HasPrefix(failure.Code, "IMAGE_CODEC_")
+}
+
 func (r projectedModel) content(ctx context.Context, req core.Request, value any) (any, error) {
 	switch values := value.(type) {
 	case []core.Block:

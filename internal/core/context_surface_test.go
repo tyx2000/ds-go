@@ -39,7 +39,7 @@ func TestContextSurfaceKeepsInputBatchAndNativeReplacement(t *testing.T) {
 }
 
 func TestContextSurfaceGeneratedSnapshotsAreNotNewInputs(t *testing.T) {
-	for _, kind := range []string{"plan-mode", "time-context", "agent-instructions", "compact-checkpoint", "session-reference", "file-reference"} {
+	for _, kind := range []string{"plan-mode", "time-context", "agent-instructions", "compact-checkpoint", "session-reference", "file-reference", "working-directory", "repeat-tool-reminder", "tool-goal"} {
 		message := TextMessage("user", "generated")
 		message.Source = map[string]any{"kind": kind}
 		nodes, err := ContextSurface([]Event{{Seq: 1, Type: "user/message", Data: JSON(message)}})

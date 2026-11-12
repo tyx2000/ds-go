@@ -209,8 +209,11 @@ func (c *Client) serveHTTPSubscription(sub *subscription, request wire) {
 	}
 	typeName, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
 	if typeName == "application/json" {
-		data, err := io.ReadAll(res.Body)
+		data, err := io.ReadAll(io.LimitReader(res.Body, maxHTTPResponseBytes+1))
 		res.Body.Close()
+		if err == nil && len(data) > maxHTTPResponseBytes {
+			err = errors.New("MCP HTTP response exceeds the size limit")
+		}
 		if err == nil {
 			err = c.handle(data, func(message wire) error { return c.httpNotify(sub.ctx, message) })
 		}
@@ -234,7 +237,7 @@ func (c *Client) serveHTTPSubscription(sub *subscription, request wire) {
 			}
 			if len(event.data) > 0 && (event.kind == "" || event.kind == "message") {
 				if err := c.handle(event.data, func(message wire) error { return c.httpNotify(sub.ctx, message) }); err != nil {
-					return err
+					c.warn("ignored malformed MCP notification: " + err.Error())
 				}
 			}
 			select {

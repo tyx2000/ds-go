@@ -137,8 +137,8 @@ func TestHTTPNotificationStreamResumesCursorAndCloses(t *testing.T) {
 	}
 }
 
-// Golden behavior from the fixed lockfile's eventsource-parser@3.1.0, whose
-// stream wrapper uses no maxBufferSize and no EOF flush/consume hook.
+// The Anthropic/MCP parser tolerates CR/LF/CRLF and flushes a trailing CR at
+// EOF so a complete event whose blank line ends in CR is not lost.
 func TestSSEParserDataDispatchRetryAndEOF(t *testing.T) {
 	for _, test := range []struct {
 		name, input    string
@@ -152,7 +152,7 @@ func TestSSEParserDataDispatchRetryAndEOF(t *testing.T) {
 		{"priming-empty-data", "id: cursor\ndata:\n\n", 1, "", "cursor", "", 0},
 		{"incomplete-eof", "id: cursor\ndata: lost\n", 0, "", "", "", 0},
 		{"incomplete-data-line", "data: lost", 0, "", "", "", 0},
-		{"trailing-cr", "data: lost\r\r", 0, "", "", "", 0},
+		{"trailing-cr", "data: lost\r\r", 1, "lost", "", "", 0},
 		{"crlf", "\xef\xbb\xbfdata: one\r\ndata: two\r\n\r\n", 1, "one\ntwo", "", "", 0},
 		{"bare-cr", "data: done\r\r: keep-alive\n", 1, "done", "", "", 0},
 		{"typed-event", "event: custom\nid: cursor\ndata: payload\n\n", 1, "payload", "cursor", "custom", 0},

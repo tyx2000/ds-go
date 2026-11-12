@@ -12,12 +12,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"dsgo/internal/agent"
+	"dsgo/internal/artifacts"
 	"dsgo/internal/attachments"
 	instructions "dsgo/internal/context"
 	"dsgo/internal/core"
@@ -60,6 +61,7 @@ type App struct {
 	session          core.Session
 	writeMu          sync.Mutex
 	editor           *tui.LineEditor // nil unless stdin and stdout are terminals
+	outTerminal      bool
 	inputOnce        sync.Once
 	reads            chan inputRequest
 	inputGate        chan struct{}
@@ -81,16 +83,18 @@ type App struct {
 	mcpSupervisors   map[string]*mcp.Supervisor
 	mcpInstructions  map[string]string
 	mcpEntries       map[string]state.MCPServer
+	mcpRetry         map[string]time.Time
 	mcpContext       context.Context
 	mcpCancel        context.CancelFunc
 	mcpWatchDone     chan struct{}
 	unattended       bool
 	receipts         sync.Map
-	background       sync.WaitGroup
 	streamKinds      sync.Map
 	signalMu         sync.Mutex
 	signalRefs       int
 	signalStop       func()
+	interactionMu    sync.Mutex
+	interactionStop  context.CancelFunc
 	foreground       sync.Map // session id -> *foregroundTurn
 	fileMu           sync.Mutex
 	fileSearches     map[string]fileSearch
@@ -98,6 +102,11 @@ type App struct {
 	jobWakeMu        sync.Mutex
 	jobWakes         map[string]jobWakeCount
 	jobOutputBounds  sync.Map
+	workspaceMu      sync.Mutex
+	workspaceCaches  map[string]artifacts.Snapshot
+	catalogWarnOnce  sync.Once
+	wdMu             sync.Mutex
+	wdCache          map[string]string
 }
 
 type inputLine struct {
@@ -123,6 +132,9 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	a.inputFile, _ = in.(*os.File)
 	// Interactive prompts edit whole characters; pipes keep line reading, and
 	// Emacs shell buffers keep canonical mode because Emacs edits the line.
+	if screen, ok := out.(*os.File); ok && tui.IsTerminal(screen) {
+		a.outTerminal = true
+	}
 	if tty, ok := in.(*os.File); ok && tui.IsTerminal(tty) && os.Getenv("INSIDE_EMACS") == "" {
 		if screen, ok := out.(*os.File); ok && tui.IsTerminal(screen) {
 			a.editor = tui.NewLineEditor(a.in, tty, screen, func(s string) {
@@ -131,6 +143,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 				_, _ = io.WriteString(a.out, s)
 			})
 			defer a.editor.Close()
+			defer a.installTerminalSignals()()
 		}
 	}
 	fs := flag.NewFlagSet("dsgo", flag.ContinueOnError)
@@ -145,7 +158,7 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 2
 	}
 	if *versionFlag {
-		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", displayVersion(), core.UpstreamCommit)
+		a.printVersion()
 		return 0
 	}
 	args = fs.Args()
@@ -155,11 +168,17 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		args = args[1:]
 	}
 	if command == "help" {
-		fmt.Fprint(out, help)
+		if rest, err := a.parseCommandFlags(args); err != nil || len(rest) > 0 {
+			return 2
+		}
+		a.printHelp()
 		return 0
 	}
 	if command == "version" || command == "--version" {
-		fmt.Fprintf(out, "dsgo %s\nupstream %s\n", displayVersion(), core.UpstreamCommit)
+		if rest, err := a.parseCommandFlags(args); err != nil || len(rest) > 0 {
+			return 2
+		}
+		a.printVersion()
 		return 0
 	}
 	a.unattended = command == "run"
@@ -174,6 +193,17 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 			return 2
 		}
 		args = sub.Args()
+		if command == "run" {
+			for _, arg := range args {
+				if lateFlag(arg) {
+					return a.fail(errors.New("flags must come before the task text (for example: dsgo run --json \"task\")"))
+				}
+			}
+		}
+	} else if rest, err := a.parseCommandFlags(args); err != nil {
+		return a.fail(err)
+	} else {
+		args = rest
 	}
 	root, err := filepath.Abs(a.flags.home)
 	if a.flags.json && a.editor != nil {
@@ -220,22 +250,31 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 	if err != nil {
 		return a.fail(err)
 	}
+	needsWorkspace := command == "chat" || command == "run" || command == "tools" || command == "skills"
 	if a.flags.cwd == "" {
-		a.flags.cwd, err = os.Getwd()
+		if cwd, getwdErr := os.Getwd(); getwdErr == nil {
+			a.flags.cwd = cwd
+		}
 	}
-	if err != nil {
-		return a.fail(err)
+	if a.flags.cwd != "" {
+		a.flags.cwd, err = filepath.Abs(a.flags.cwd)
+		if err != nil {
+			return a.fail(err)
+		}
 	}
-	a.flags.cwd, err = filepath.Abs(a.flags.cwd)
-	if err != nil {
-		return a.fail(err)
-	}
-	info, err := os.Stat(a.flags.cwd)
-	if err != nil {
-		return a.fail(err)
-	}
-	if !info.IsDir() {
-		return a.fail(errors.New("workspace is not a directory"))
+	if needsWorkspace {
+		// Diagnostics and session maintenance must keep working when the
+		// original directory was moved or deleted.
+		if a.flags.cwd == "" {
+			return a.fail(errors.New("workspace directory is unavailable"))
+		}
+		info, statErr := os.Stat(a.flags.cwd)
+		if statErr != nil {
+			return a.fail(statErr)
+		}
+		if !info.IsDir() {
+			return a.fail(errors.New("workspace is not a directory"))
+		}
 	}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 	defer a.cancel()
@@ -364,6 +403,97 @@ func (a *App) promptLabel(label string) string {
 }
 
 func (a *App) fail(err error) int { a.errorLine("dsgo: " + clean(err.Error())); return 1 }
+
+func (a *App) printVersion() {
+	if a.flags.json {
+		a.writeJSON(map[string]any{"type": "version", "version": displayVersion(), "upstream": core.UpstreamCommit})
+		return
+	}
+	fmt.Fprintf(a.out, "dsgo %s\nupstream %s\n", displayVersion(), core.UpstreamCommit)
+}
+
+func (a *App) printHelp() {
+	if a.flags.json {
+		a.writeJSON(map[string]any{"type": "help", "text": help})
+		return
+	}
+	fmt.Fprint(a.out, help)
+}
+
+// parseCommandFlags extracts global flags that appear after a subcommand.
+// Go's flag package stops at the first positional token, which silently left
+// "--json" in prompts or ignored it for config/sessions/doctor commands.
+func (a *App) parseCommandFlags(args []string) ([]string, error) {
+	var rest []string
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			rest = append(rest, args[index+1:]...)
+			break
+		}
+		name, value, inline := strings.Cut(arg, "=")
+		if !strings.HasPrefix(name, "-") || name == "-" {
+			rest = append(rest, arg)
+			continue
+		}
+		takeValue := func() (string, error) {
+			if inline {
+				return value, nil
+			}
+			index++
+			if index >= len(args) {
+				return "", fmt.Errorf("flag %s requires a value", name)
+			}
+			return args[index], nil
+		}
+		var err error
+		switch name {
+		case "--json":
+			if inline {
+				return nil, errors.New("--json does not take a value")
+			}
+			a.flags.json = true
+		case "--home", "--cwd", "--model", "--provider", "--thinking", "--permission", "--approval", "--resume":
+			var v string
+			if v, err = takeValue(); err != nil {
+				return nil, err
+			}
+			switch name {
+			case "--home":
+				a.flags.home = v
+			case "--cwd":
+				a.flags.cwd = v
+			case "--model":
+				a.flags.model = v
+			case "--provider":
+				a.flags.provider = v
+			case "--thinking":
+				a.flags.thinking = v
+			case "--permission":
+				a.flags.permission = v
+			case "--approval":
+				a.flags.approval = v
+			case "--resume":
+				a.flags.resume = v
+			}
+		default:
+			// Unknown dash-prefixed tokens may be positional values (for
+			// example a negative config value or `config set api_key --stdin`).
+			// Preserve them rather than silently swallowing or rejecting them.
+			rest = append(rest, arg)
+		}
+	}
+	return rest, nil
+}
+
+func lateFlag(arg string) bool {
+	name, _, _ := strings.Cut(arg, "=")
+	switch name {
+	case "--json", "--home", "--cwd", "--model", "--provider", "--thinking", "--permission", "--approval", "--resume", "--version":
+		return true
+	}
+	return false
+}
 func (a *App) print(v any) {
 	if a.flags.json {
 		a.writeJSON(v)
@@ -372,6 +502,20 @@ func (a *App) print(v any) {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	a.line("%s\n", clean(string(b)))
 }
+
+// interactionLine renders a prompt the user must answer. When stdout is
+// redirected the prompt would otherwise be invisible while the terminal still
+// waits for input, so mirror it to stderr.
+func (a *App) interactionLine(format string, args ...any) {
+	text := fmt.Sprintf(format, args...)
+	a.line("%s", text)
+	if !a.outTerminal && a.err != nil && a.err != a.out {
+		a.writeMu.Lock()
+		_, _ = io.WriteString(a.err, text)
+		a.writeMu.Unlock()
+	}
+}
+
 func (a *App) line(format string, args ...any) {
 	text := fmt.Sprintf(format, args...)
 	if a.flags.json {
@@ -434,11 +578,36 @@ func (a *App) selectSession(id string) error {
 	var err error
 	fresh := id == ""
 	if fresh {
-		next, err = a.store.Create(a.flags.cwd, "New session")
+		// A new session belongs to the workspace of the session it replaces,
+		// not to the directory dsgo happened to start in. Using the startup
+		// directory after /resume can widen the sandbox boundary to a parent
+		// directory that contains unrelated projects.
+		cwd := a.flags.cwd
+		if a.session.ID != "" && a.session.CWD != "" {
+			cwd = a.session.CWD
+		}
+		next, err = a.store.Create(cwd, "New session")
 		if err != nil {
 			return err
 		}
 		next.Permission, next.Model, next.Provider, next.Thinking = a.cfg.Permission, a.cfg.Model, a.cfg.SelectedProvider, a.cfg.Thinking
+		if a.session.ID != "" {
+			// A new session inherits the settings the user just chose for the
+			// session it replaces, without racing background engine reads of
+			// the global config struct.
+			if a.session.Permission != "" {
+				next.Permission = a.session.Permission
+			}
+			if a.session.Model != "" {
+				next.Model = a.session.Model
+			}
+			if a.session.Provider != "" {
+				next.Provider = a.session.Provider
+			}
+			if a.session.Thinking != "" {
+				next.Thinking = a.session.Thinking
+			}
+		}
 	} else {
 		next, err = a.store.Get(id)
 		if err != nil {
@@ -568,6 +737,25 @@ func (a *App) notice(n agent.Notice) {
 	}
 }
 
+// interactionOrigin identifies which session and workspace a foreground input
+// request belongs to. Background wake-ups can request approval while another
+// session is in the composer; the user must be able to tell them apart.
+func (a *App) interactionOrigin(sessionID string) string {
+	workspace := ""
+	if a.store != nil && sessionID != "" {
+		if session, err := a.store.Get(sessionID); err == nil {
+			workspace = session.CWD
+		}
+	}
+	if workspace == "" {
+		workspace = a.flags.cwd
+	}
+	if sessionID == "" {
+		sessionID = "interactive"
+	}
+	return "session " + sessionID + " · " + clean(workspace)
+}
+
 func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 	if a.flags.json || a.unattended {
 		return false, errors.New("approval requires an interactive terminal; JSON mode denies unavailable interaction")
@@ -577,7 +765,7 @@ func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 		return false, err
 	}
 	defer release()
-	a.line("\nApproval %s\n%s\n%s\nAllow once? [y/N] ", clean(q.Tool), clean(q.Description), clean(string(q.Input)))
+	a.interactionLine("\nApproval %s\n[%s]\n%s\n%s\nAllow once? [y/N] ", clean(q.Tool), a.interactionOrigin(q.SessionID), clean(q.Description), clean(string(q.Input)))
 	answer, err := a.readPrivateLine(ctx, "Allow once? [y/N] ")
 	if err != nil {
 		return false, err
@@ -591,11 +779,11 @@ func (a *App) approve(ctx context.Context, q core.Approval) (bool, error) {
 func (a *App) readLine(ctx context.Context) (string, error) {
 	return a.readLineWithOptions(ctx, tui.LineOptions{})
 }
-func (a *App) readPrivateLine(ctx context.Context, prompt string) (string, error) {
-	return a.readInputRequest(ctx, tui.LineOptions{Prompt: prompt}, false, true)
-}
 func (a *App) readLineWithOptions(ctx context.Context, options tui.LineOptions) (string, error) {
 	return a.readInput(ctx, options, false)
+}
+func (a *App) readPrivateLine(ctx context.Context, prompt string) (string, error) {
+	return a.readInputRequest(ctx, tui.LineOptions{Prompt: prompt}, false, true)
 }
 
 func (a *App) turn(prompt string) error {
@@ -687,6 +875,7 @@ func (a *App) chat() error {
 	if a.flags.resume != "" {
 		a.showHistory()
 	}
+	var lastTurnErr error
 	for {
 		line, err := a.readInput(a.ctx, tui.LineOptions{Prompt: a.promptLabel("dsgo>") + " ", History: true, Complete: a.completionFor(a.session.ID), DisplaySubmitted: submittedUserDisplay}, true)
 		eof := errors.Is(err, io.EOF)
@@ -705,7 +894,7 @@ func (a *App) chat() error {
 		}
 		if strings.TrimSpace(line) == "" {
 			if eof {
-				return nil
+				return lastTurnErr
 			}
 			continue
 		}
@@ -715,13 +904,23 @@ func (a *App) chat() error {
 				a.fail(x)
 			}
 			if quit {
-				return nil
+				return lastTurnErr
 			}
 		} else if x := a.turn(line); x != nil {
 			a.fail(x)
+			lastTurnErr = x
+		} else {
+			lastTurnErr = nil
+		}
+		// The engine commits automatic titles and plan changes directly to
+		// the store. Refresh the main-goroutine cache before the next slash
+		// command reads it; notice() runs on engine goroutines.
+		if current, getErr := a.store.Get(a.session.ID); getErr == nil {
+			a.session = current
+			a.plan.Store(current.Plan)
 		}
 		if eof {
-			return nil
+			return lastTurnErr
 		}
 		if err = a.ctx.Err(); err != nil {
 			return err
@@ -740,6 +939,9 @@ func (a *App) showHistory() {
 		return
 	}
 	for _, m := range messages {
+		if !displayHistoryMessage(m) {
+			continue
+		}
 		for _, b := range m.Content {
 			if b.Type == "text" {
 				text := b.Text
@@ -749,6 +951,23 @@ func (a *App) showHistory() {
 				a.line("\n%s: %s\n", m.Role, clean(text))
 			}
 		}
+	}
+}
+
+func displayHistoryMessage(message core.Message) bool {
+	if message.Role == "assistant" {
+		return true
+	}
+	if message.Role != "user" {
+		return false
+	}
+	var source struct{ Kind string }
+	_ = json.Unmarshal(core.JSON(message.Source), &source)
+	switch source.Kind {
+	case "", "user", "goal", "agent", "schedule", "tool-jobs", "subagent":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -772,15 +991,6 @@ func (a *App) doctor() int {
 	}
 	a.print(map[string]any{"version": displayVersion(), "upstream": core.UpstreamCommit, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "home": a.flags.home, "cwd": a.flags.cwd, "api_key_configured": a.cfg.APIKey != "", "base_url": a.cfg.BaseURL, "sandbox": backend, "image_codecs": attachments.ImageCodecStatus(), "parity": "in progress; see docs/PARITY.md"})
 	return 0
-}
-
-func sortedKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 const help = `dsgo — Go terminal port of DeepSeek Harness (in development)

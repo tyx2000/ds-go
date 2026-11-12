@@ -14,11 +14,12 @@ import (
 )
 
 type goalRuntime struct {
-	mu      sync.Mutex
-	service *state.Goals
-	drivers map[string]*goalDriver
-	closing bool
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	service  *state.Goals
+	drivers  map[string]*goalDriver
+	failures map[string]error
+	closing  bool
+	wg       sync.WaitGroup
 }
 type goalDriver struct {
 	cancel    context.CancelFunc
@@ -189,12 +190,25 @@ func (a *App) startGoalDriver(id string) {
 		defer close(driver.done)
 		defer a.goals.wg.Done()
 		defer cancel()
+		var driveErr error
 		defer func() {
 			a.goals.mu.Lock()
 			if a.goals.drivers[id] == driver {
 				delete(a.goals.drivers, id)
 			}
+			if driveErr != nil {
+				if a.goals.failures == nil {
+					a.goals.failures = map[string]error{}
+				}
+				a.goals.failures[id] = driveErr
+			} else if a.goals.drivers[id] == nil {
+				delete(a.goals.failures, id)
+			}
 			a.goals.mu.Unlock()
+			if driveErr != nil {
+				_, _ = a.store.Append(id, "", "goal/driver-failed", map[string]any{"error": driveErr.Error()})
+				a.errorLine("dsgo: goal stopped: " + clean(driveErr.Error()))
+			}
 		}()
 		for {
 			if err := a.engine.WaitIdle(ctx, id); err != nil {
@@ -205,6 +219,7 @@ func (a *App) startGoalDriver(id string) {
 			}
 			message, err := a.goalContinuation(ctx, id)
 			if err != nil {
+				driveErr = err
 				a.goalService().Disarm(id)
 				return
 			}
@@ -231,6 +246,7 @@ func (a *App) startGoalDriver(id string) {
 				if errors.As(err, &failure) && (failure.Code == "GOAL_ROUND_STALE" || failure.Code == "GOAL_ROUND_YIELDED") {
 					continue
 				}
+				driveErr = err
 				a.goalService().Disarm(id)
 				return
 			}
@@ -241,8 +257,15 @@ func (a *App) waitGoalDrivers(ctx context.Context, id string) error {
 	for {
 		a.goals.mu.Lock()
 		driver := a.goals.drivers[id]
+		failure := a.goals.failures[id]
+		if driver == nil && failure != nil {
+			delete(a.goals.failures, id)
+		}
 		a.goals.mu.Unlock()
 		if driver == nil {
+			if failure != nil {
+				return fmt.Errorf("goal driver for %s: %w", id, failure)
+			}
 			return nil
 		}
 		select {

@@ -271,7 +271,10 @@ func readInstructionFile(ctx stdctx.Context, probe instructionProbe, maxSource i
 		data.Write(chunk[:n])
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				return nil, ctx.Err()
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, fmt.Errorf("read instruction file %s: %w", probe.file.AbsolutePath, readErr)
 			}
 			break
 		}

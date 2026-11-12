@@ -126,6 +126,12 @@ func (e *Engine) compactAt(ctx context.Context, id, turn string, messages []core
 	if err != nil {
 		return err
 	}
+	for i := range summary {
+		// A summary is model/tool output and may contain the literal closing
+		// tag; escaping it keeps the checkpoint boundary unforgeable.
+		summary[i].Text = strings.ReplaceAll(summary[i].Text, "</compacted-summary>", "<\\/compacted-summary>")
+		summary[i].Text = strings.ReplaceAll(summary[i].Text, "<compacted-summary>", "<\\compacted-summary>")
+	}
 	checkpoint := core.Message{Role: "user", Source: map[string]any{"kind": "compact-checkpoint", "compactionId": ID()}, Content: append([]core.Block{{Type: "text", Text: checkpointPreamble + "\n\n<compacted-summary>"}}, summary...)}
 	checkpoint.Content = append(checkpoint.Content, core.Block{Type: "text", Text: "</compacted-summary>"})
 	price, err := EstimateContextMessage(checkpoint)
@@ -172,8 +178,12 @@ func (e *Engine) compactAt(ctx context.Context, id, turn string, messages []core
 }
 
 func compactionSummary(response core.Response) ([]core.Block, error) {
-	if response.StopReason == "max_tokens" || response.StopReason == "model_context_window_exceeded" {
-		return nil, errors.New("summarization truncated at the token cap (incomplete checkpoint)")
+	// Only a normal completion is a trustworthy checkpoint. A refusal, a
+	// stop-sequence hit, or a paused turn can still carry text, and treating
+	// that text as a summary would permanently replace real context.
+	// Empty is accepted for adapters that predate stop-reason propagation.
+	if response.StopReason != "" && response.StopReason != "end_turn" {
+		return nil, fmt.Errorf("summarization ended with stop reason %q (incomplete checkpoint)", response.StopReason)
 	}
 	var summary []core.Block
 	nonempty := false

@@ -86,6 +86,11 @@ func (e *Engine) Inbox(ctx context.Context, id string, message core.Message) (st
 	if _, err := e.Store.Get(id); err != nil {
 		return "", err
 	}
+	if _, ok := e.Store.(interface {
+		Events(string) ([]core.Event, error)
+	}); !ok {
+		return "", errors.New("inbox delivery requires an event store")
+	}
 	entry := inboxEntry{ID: ID(), Message: message}
 	event, err := e.Store.Append(id, "", "user/inbox", entry)
 	if err != nil {
@@ -100,6 +105,7 @@ func (e *Engine) pendingInbox(id string) ([]inboxEntry, error) {
 		Events(string) ([]core.Event, error)
 	})
 	if !ok {
+		// Legacy stores cannot expose inbox history; they simply have none.
 		return nil, nil
 	}
 	events, err := store.Events(id)

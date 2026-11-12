@@ -22,3 +22,10 @@ func TestSchemaDoesNotReadRemoteOrLocalReferences(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultDialectAcceptsDraft07Schemas(t *testing.T) {
+	schema := []byte(`{"type":"object","properties":{"pair":{"type":"array","items":[{"type":"string"},{"type":"number"}]},"count":{"type":"number","exclusiveMinimum":0}}}`)
+	if err := Validate(schema, []byte(`{"pair":["a",1],"count":2}`)); err != nil {
+		t.Fatalf("draft-07 schema rejected: %v", err)
+	}
+}

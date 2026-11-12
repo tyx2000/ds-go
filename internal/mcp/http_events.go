@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+const (
+	maxHTTPResponseBytes = 64 << 20
+	maxSSELineBytes      = 16 << 20
+	maxSSEEventBytes     = 32 << 20
+)
+
 type sseEvent struct {
 	data     []byte
 	kind     string
@@ -56,6 +62,9 @@ func parseSSEEvents(reader io.Reader, emit func(sseEvent) error) error {
 		}
 		switch string(key) {
 		case "data":
+			if len(event.data)+len(value)+1 > maxSSEEventBytes {
+				return errors.New("MCP SSE event exceeds the size limit")
+			}
 			hasData = true
 			event.data = append(event.data, value...)
 			event.data = append(event.data, '\n')
@@ -63,7 +72,8 @@ func parseSSEEvents(reader io.Reader, emit func(sseEvent) error) error {
 			event.kind = string(value)
 		case "id":
 			event.id = string(value)
-			event.hasID = len(value) > 0 && !bytes.ContainsRune(value, '\x00')
+			// An empty id field is meaningful: it resets the replay cursor.
+			event.hasID = !bytes.ContainsRune(value, '\x00')
 		case "retry":
 			if len(value) == 0 || bytes.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
 				return nil
@@ -130,9 +140,12 @@ func (c *Client) readHTTPEvents() {
 			}
 			var status *HTTPStatusError
 			if errors.As(err, &status) && status.StatusCode == http.StatusMethodNotAllowed {
+				// The server does not offer a notification stream. The client
+				// itself is still usable; only this optional stream is absent.
 				return
 			}
 			if errors.Is(err, ErrSessionExpired) {
+				c.fail(fmt.Errorf("MCP notification stream session expired: %w", ErrSessionExpired))
 				return
 			}
 		} else {
@@ -148,7 +161,10 @@ func (c *Client) readHTTPEvents() {
 					}
 					if len(event.data) > 0 && (event.kind == "" || event.kind == "message") {
 						if err := c.handle(event.data, func(message wire) error { return c.httpNotify(ctx, message) }); err != nil {
-							return err
+							// A malformed frame is a warning, not a reason to
+							// tear down the notification stream; a later valid
+							// frame must still be delivered.
+							c.warn("ignored malformed MCP notification: " + err.Error())
 						}
 					}
 					return nil
@@ -163,6 +179,10 @@ func (c *Client) readHTTPEvents() {
 			if err == nil {
 				err = errors.New("MCP HTTP notification stream ended")
 			}
+			// A repeatedly broken notification stream means the HTTP session
+			// can no longer be trusted. Mark the client broken so the
+			// supervisor reconnects instead of waiting forever on Done().
+			c.fail(fmt.Errorf("MCP notification stream unavailable: %w", err))
 			return
 		}
 		if err := waitSSE(ctx, sseDelay(attempt, delay)); err != nil {

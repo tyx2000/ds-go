@@ -89,8 +89,8 @@ func TestGoalManualForkWithDelegatedLineageIsIndependentRuntimeRoot(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !fork.Delegated || fork.ParentID != childSession.ID {
-		t.Fatal("fixture lost its durable delegated ancestry")
+	if fork.Delegated || fork.ParentID != childSession.ID {
+		t.Fatal("manual fork must be a normal session but keep its ancestry")
 	}
 	// No owning live activation establishes this fork. The historical flags
 	// remain valid policy metadata, while goal authority follows runtime roots.

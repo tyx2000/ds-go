@@ -20,8 +20,13 @@ func htmlMarkdown(source, base string) string {
 	// hide runaway nesting. Raw text and comments are handled by the tokenizer.
 	tokens := html.NewTokenizer(strings.NewReader(source))
 	stack := []string{}
+	tokenCount := 0
 	for {
 		kind := tokens.Next()
+		tokenCount++
+		if tokenCount > 200000 {
+			return htmlOmitted
+		}
 		if kind == html.ErrorToken {
 			if tokens.Err() != io.EOF {
 				return htmlOmitted
@@ -214,8 +219,11 @@ func safeLink(raw string, base *url.URL) string {
 func renderTable(table *html.Node, render func(*html.Node) string) string {
 	rows := [][]string{}
 	header := false
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
+	var walk func(*html.Node, int)
+	walk = func(n *html.Node, depth int) {
+		if depth > 512 {
+			return
+		}
 		if n.Type == html.ElementNode && (inactiveElements[n.Data] || hiddenNode(n)) {
 			return
 		}
@@ -241,10 +249,10 @@ func renderTable(table *html.Node, render func(*html.Node) string) string {
 			return
 		}
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
+			walk(child, depth+1)
 		}
 	}
-	walk(table)
+	walk(table, 0)
 	if len(rows) == 0 {
 		return ""
 	}

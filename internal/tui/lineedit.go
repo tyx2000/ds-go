@@ -205,6 +205,33 @@ func (e *LineEditor) Interrupt() {
 	e.replaceLocked(0, len(e.buf), nil, 0)
 }
 
+// RestoreTerminal restores termios and cursor state from a signal handler.
+func (e *LineEditor) RestoreTerminal() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.restore != nil {
+		if e.query {
+			e.write("\x1b[?2004l")
+		}
+		e.restore()
+		e.restore = nil
+	}
+}
+
+// ReapplyTerminal re-enters raw mode after SIGCONT.
+func (e *LineEditor) ReapplyTerminal() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.active {
+		return
+	}
+	restore, err := lineTerminal(e.tty)
+	if err != nil {
+		return
+	}
+	e.restore = restore
+}
+
 func (e *LineEditor) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -391,6 +418,13 @@ func (e *LineEditor) insertUTF8(lead byte) {
 		if err != nil {
 			return
 		}
+		if next&0xC0 != 0x80 {
+			// A non-continuation byte (for example the ESC of a bracketed
+			// paste terminator) must not be swallowed by a truncated
+			// sequence; leave it for the normal key parser.
+			_ = e.in.UnreadByte()
+			break
+		}
 		p = append(p, next)
 	}
 	if r, size := utf8.DecodeRune(p); r != utf8.RuneError || size > 1 {
@@ -554,7 +588,16 @@ func (e *LineEditor) insert(r rune) {
 		e.revision++
 		e.write(string(r))
 		if e.start > 0 {
-			e.row, e.col = advance(e.row, e.col, e.width, r)
+			w := runeWidth(r)
+			if isClusterExtend(r) {
+				w = 0
+			} else if isRegionalIndicator(r) && len(e.buf) >= 2 && isRegionalIndicator(e.buf[len(e.buf)-2]) {
+				w = 0
+			} else if len(e.buf) >= 2 && e.buf[len(e.buf)-2] == 0x200D {
+				// The rune after a ZWJ joins the preceding cluster.
+				w = 0
+			}
+			e.row, e.col = advanceWidth(e.row, e.col, e.width, w)
 		}
 		e.shown = append(e.shown, r)
 		e.shownCursor = e.cursor
@@ -594,8 +637,15 @@ func (e *LineEditor) replaceLocked(start, end int, value []rune, cursor int) {
 
 func cells(text []rune) int {
 	n := 0
-	for _, r := range text {
-		n += runeWidth(r)
+	for i := 0; i < len(text); {
+		if text[i] == '\t' {
+			n += 8 - n%8
+			i++
+			continue
+		}
+		end := clusterEnd(text, i)
+		n += clusterWidth(text[i:end])
+		i = end
 	}
 	return n
 }
@@ -737,27 +787,40 @@ func nextBoundary(text []rune, pos int) int {
 // part of the draft and do not submit it.
 func layout(start, cols int, text []rune) (int, int) {
 	row, col := 0, start
-	for _, r := range text {
-		row, col = advance(row, col, cols, r)
+	for i := 0; i < len(text); {
+		r := text[i]
+		if r == '\n' || r == '\t' {
+			row, col = advance(row, col, cols, r)
+			i++
+			continue
+		}
+		end := clusterEnd(text, i)
+		row, col = advanceWidth(row, col, cols, clusterWidth(text[i:end]))
+		i = end
 	}
 	return row, col
 }
+
 func advance(row, col, cols int, r rune) (int, int) {
 	if r == '\n' {
 		return row + 1, 1
 	}
-	w := runeWidth(r)
 	if r == '\t' {
-		w = 8 - (col-1)%8
+		w := 8 - (col-1)%8
+		if col > cols {
+			row, col = row+1, 1
+		}
+		return row, min(col+w, cols)
 	}
+	return advanceWidth(row, col, cols, runeWidth(r))
+}
+
+func advanceWidth(row, col, cols, w int) (int, int) {
 	if w == 0 {
 		return row, col
 	}
 	if col > cols {
 		row, col = row+1, 1
-	}
-	if r == '\t' {
-		return row, min(col+w, cols)
 	}
 	if col+w-1 > cols {
 		row, col = row+1, 1

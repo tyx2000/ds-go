@@ -24,7 +24,10 @@ func (a *App) contextRoute(ctx context.Context, req core.Request) (agent.Context
 	}
 	info, err := a.deepSeekModel(ctx, req)
 	if err != nil {
-		return route, err
+		// Capacity is advisory. A catalog outage must not stop a request that
+		// the configured context window can still describe safely.
+		a.catalogWarning(err)
+		return route, nil
 	}
 	route.ContextWindow, route.DefaultMaxTokens = info.ContextWindow, info.MaxTokens
 	if route.ContextWindow <= 0 {

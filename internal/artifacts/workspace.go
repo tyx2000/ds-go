@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -24,6 +25,7 @@ type FileState struct {
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
 	Mode      uint32 `json:"mode"`
+	ModTime   int64  `json:"mtime,omitempty"`
 	Binary    bool   `json:"binary,omitempty"`
 	Oversized bool   `json:"oversized,omitempty"`
 }
@@ -32,9 +34,27 @@ type Snapshot struct {
 	Files map[string]FileState `json:"files"`
 }
 
-// Capture never follows workspace symlinks and never traverses .git. Bytes are
-// read through os.Root, so a concurrent path replacement cannot escape CWD.
+// Build and cache directories are not useful workspace changes and are often
+// hundreds of megabytes; scanning them made every turn twice as expensive as
+// the model work. Operators can still inspect changes by path and by git.
+var snapshotExcludedDirs = map[string]bool{
+	".git": true, ".cache": true, "node_modules": true, "vendor": true,
+	"target": true, "dist": true, "build": true, "out": true, "coverage": true,
+	".venv": true, "venv": true, "__pycache__": true, ".pytest_cache": true,
+	".mypy_cache": true, ".gradle": true, ".next": true, ".nuxt": true, ".turbo": true,
+}
+
+// Capture never follows workspace symlinks and never traverses .git or common
+// dependency/build directories. Bytes are read through os.Root, so a concurrent
+// path replacement cannot escape CWD.
 func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
+	return s.CaptureWith(ctx, cwd, nil)
+}
+
+// CaptureWith reuses the prior snapshot for files whose size, mode and mtime
+// are unchanged. The end-of-turn capture then avoids reading the whole
+// workspace again while preserving the same digest comparison.
+func (s *Store) CaptureWith(ctx context.Context, cwd string, previous *Snapshot) (Snapshot, error) {
 	cwd, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
 		return Snapshot{}, err
@@ -42,6 +62,9 @@ func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
 	cwd, err = filepath.Abs(cwd)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	if previous != nil && previous.CWD != cwd {
+		previous = nil
 	}
 	r, err := os.OpenRoot(cwd)
 	if err != nil {
@@ -61,13 +84,16 @@ func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
 			return nil
 		}
 		absolute := filepath.Join(cwd, path)
-		if entry.Name() == ".git" || absolute == s.path {
+		if absolute == s.path {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
 		}
 		if entry.IsDir() {
+			if snapshotExcludedDirs[entry.Name()] {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if len(result.Files) >= maxScanFiles {
@@ -77,9 +103,16 @@ func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
 		if err != nil {
 			return err
 		}
+		key := filepath.ToSlash(path)
 		var data []byte
 		var state FileState
 		state.Mode = uint32(info.Mode())
+		state.ModTime = info.ModTime().UnixNano()
+		state.Size = info.Size()
+		if reused, ok := previousFile(previous, key, info); ok {
+			result.Files[key] = reused
+			return nil
+		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			link, err := r.Readlink(path)
 			if err != nil {
@@ -89,6 +122,17 @@ func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
 			state.Size = int64(len(data))
 		} else {
 			if !info.Mode().IsRegular() {
+				return nil
+			}
+			// Oversized files cannot be diffed anyway. Hashing them forced a
+			// full read of every video/archive on every turn, so identify them
+			// by size+mtime instead and never retain their bytes.
+			if info.Size() > MaxFileBytes {
+				h := sha256.New()
+				_, _ = fmt.Fprintf(h, "oversized|%s|%d|%d|%d", key, info.Size(), state.ModTime, state.Mode)
+				state.Digest = hex.EncodeToString(h.Sum(nil))
+				state.Oversized = true
+				result.Files[key] = state
 				return nil
 			}
 			if info.Size() > maxSnapshotBytes-total {
@@ -147,10 +191,22 @@ func (s *Store) Capture(ctx context.Context, cwd string) (Snapshot, error) {
 				return err
 			}
 		}
-		result.Files[filepath.ToSlash(path)] = state
+		result.Files[key] = state
 		return nil
 	})
 	return result, err
+}
+
+func previousFile(previous *Snapshot, key string, info os.FileInfo) (FileState, bool) {
+	if previous == nil {
+		return FileState{}, false
+	}
+	old, ok := previous.Files[key]
+	if !ok || old.Digest == "" || old.Oversized || old.Size != info.Size() ||
+		old.Mode != uint32(info.Mode()) || old.ModTime != info.ModTime().UnixNano() {
+		return FileState{}, false
+	}
+	return old, true
 }
 
 type ChangedFile struct {
@@ -263,6 +319,23 @@ func (s *Store) SaveChanges(session, turnID string, changes Changes) error {
 	if session == "" || turnID == "" {
 		return errors.New("workspace changes require session and turn")
 	}
+	// Persist only the changed paths. The full before/after snapshot made one
+	// turn's change record as large as the whole workspace.
+	keep := make(map[string]bool, len(changes.Summary.Files))
+	for _, file := range changes.Summary.Files {
+		keep[file.Path] = true
+	}
+	filter := func(snapshot Snapshot) Snapshot {
+		files := make(map[string]FileState, len(keep))
+		for path, state := range snapshot.Files {
+			if keep[path] {
+				files[path] = state
+			}
+		}
+		return Snapshot{CWD: snapshot.CWD, Files: files}
+	}
+	changes.Before = filter(changes.Before)
+	changes.After = filter(changes.After)
 	b, err := json.Marshal(changes)
 	if err != nil {
 		return err

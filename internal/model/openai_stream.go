@@ -103,6 +103,11 @@ func chatStop(value string) (string, error) {
 		return "max_tokens", nil
 	case "content_filter":
 		return "stop_sequence", nil
+	case "insufficient_system_resource", "aborted":
+		// DeepSeek and compatible gateways report transient capacity
+		// interruptions here. Treat them as retryable server failures rather
+		// than a client protocol error.
+		return "", &Error{Code: "SERVER"}
 	}
 	return "", malformed()
 }
@@ -326,9 +331,14 @@ func responseBlocks(data json.RawMessage) ([]core.Block, error) {
 			return nil, malformed()
 		}
 		b := core.Block{Type: "tool_use", ID: item.CallID, Name: item.Name}
-		if jsonObject([]byte(item.Arguments)) {
+		switch {
+		case strings.TrimSpace(item.Arguments) == "":
+			// No-argument tools commonly arrive as an empty string. The tool
+			// schema still expects an object, not a missing input.
+			b.Input = json.RawMessage("{}")
+		case jsonObject([]byte(item.Arguments)):
 			b.Input = json.RawMessage(item.Arguments)
-		} else {
+		default:
 			b.Data = item.Arguments
 		}
 		return []core.Block{b}, nil
@@ -559,7 +569,21 @@ func parseResponses(reader io.Reader, isJSON bool, emit func(core.Delta)) (core.
 				return false, malformed()
 			}
 			if len(response.Content) > len(complete.Content) {
-				return false, malformed()
+				// Under an output cap the settled envelope legitimately omits
+				// a truncated tool call that was already announced by deltas.
+				// Accept only trailing tool_use blocks that finalize dropped.
+				extra := response.Content[len(complete.Content):]
+				truncatedTool := complete.StopReason == "max_tokens"
+				for _, block := range extra {
+					truncatedTool = truncatedTool && block.Type == "tool_use"
+				}
+				if !truncatedTool {
+					return false, malformed()
+				}
+				for i := len(complete.Content); i < len(response.Content); i++ {
+					emit(core.Delta{Type: "block_stop", Index: i})
+				}
+				response.Content = response.Content[:len(complete.Content)]
 			}
 			for i, b := range complete.Content {
 				previous := core.Block{Type: b.Type}

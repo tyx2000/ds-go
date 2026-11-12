@@ -224,7 +224,7 @@ func TestMCPResponseCacheRetentionTTLBoundAndFIFO(t *testing.T) {
 	}
 }
 
-func TestMCPBadOutputSchemaFailsOnlyThatToolBeforeDispatch(t *testing.T) {
+func TestMCPBadOutputSchemaSkipsOutputValidationOnly(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request wire
@@ -251,16 +251,16 @@ func TestMCPBadOutputSchemaFailsOnlyThatToolBeforeDispatch(t *testing.T) {
 	if err != nil || len(tools) != 2 {
 		t.Fatalf("bad output schema rejected whole generation: %v %v", tools, err)
 	}
-	if _, err := client.CallTool(context.Background(), "bad", json.RawMessage(`{}`)); err == nil {
-		t.Fatal("uncompilable output schema accepted")
+	if _, err := client.CallTool(context.Background(), "bad", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("uncompilable output schema disabled the tool: %v", err)
 	}
-	if calls.Load() != 0 {
-		t.Fatal("bad schema discovered after executing remote tool")
+	if calls.Load() != 1 {
+		t.Fatalf("calls after bad tool: %d", calls.Load())
 	}
 	if _, err := client.CallTool(context.Background(), "good", json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 {
+	if calls.Load() != 2 {
 		t.Fatal(calls.Load())
 	}
 }

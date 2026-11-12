@@ -51,7 +51,9 @@ func TestMessagesRetainThinkingToolsAndCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appendMessage(t, s, session.ID, "assistant/attempt", "failed response must not enter model context")
+	if _, err := s.Append(session.ID, "turn", "assistant/attempt", map[string]any{"response": map[string]any{"id": "failed", "content": []core.Block{{Type: "text", Text: "failed response must not enter model context"}}}, "error": "failed"}); err != nil {
+		t.Fatal(err)
+	}
 	msgs, err := s.Messages(session.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -377,5 +379,74 @@ func TestPermissionsAndConfig(t *testing.T) {
 	}
 	if bytes.Contains(b, []byte("invalid")) {
 		t.Fatal("failed validation changed config")
+	}
+}
+
+func TestAppendCacheKeepsSequenceAndObservesExternalAppend(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.Create(root, "cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 40; i++ {
+		if _, err := store.Append(session.ID, "turn", "step/started", map[string]any{"step": i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	second, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Append(session.ID, "turn", "external", map[string]any{"n": 41}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(session.ID, "turn", "after-external", map[string]any{"n": 42}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.Events(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 42 || events[41].Seq != 42 {
+		t.Fatalf("events=%d last=%d", len(events), events[len(events)-1].Seq)
+	}
+}
+
+func TestEventsSkipsBlankLinesAndToleratesMissingMetadataEntries(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.Create(root, "blank")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(session.ID, "turn", "one", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := store.dir(session.ID)
+	file, err := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	if _, err := store.Append(session.ID, "turn", "two", map[string]any{}); err != nil {
+		t.Fatalf("append after blank line: %v", err)
+	}
+	// A corrupt sibling must not hide the healthy session from List.
+	if err := os.Mkdir(filepath.Join(root, "sessions", "0123456789abcdef0123456789abcdef"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List(true)
+	if err != nil || len(list) != 1 || list[0].ID != session.ID {
+		t.Fatalf("list=%v err=%v", list, err)
 	}
 }

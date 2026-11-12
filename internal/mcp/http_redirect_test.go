@@ -67,44 +67,29 @@ func TestHTTPFetchRedirectMethodsAndBodies(t *testing.T) {
 	}
 }
 
-func TestHTTPFetchRedirectOriginStrippingAndNoCredentialRestoration(t *testing.T) {
-	var original *httptest.Server
-	var destinationHits, returnHits atomic.Int32
+func TestHTTPFetchRedirectRejectsCrossOrigin(t *testing.T) {
+	var destinationHits, originalHits atomic.Int32
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		destinationHits.Add(1)
-		for _, header := range []string{"Authorization", "Proxy-Authorization", "Cookie"} {
-			if r.Header.Get(header) != "" {
-				t.Errorf("cross-port %s leaked", header)
-			}
-		}
-		if r.Host == "configured.example" || r.Header.Get("X-Api-Key") != "custom" || r.Header.Get("Mcp-Param-Tenant") != "tenant" {
-			t.Error("cross-origin Host/custom header rules differed")
-		}
-		w.Header().Set("Location", original.URL+"/return")
-		w.WriteHeader(307)
+		w.WriteHeader(204)
 	}))
 	defer destination.Close()
-	original = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/return" {
-			returnHits.Add(1)
-			if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
-				t.Error("original credentials restored after cross-origin hop")
-			}
-			w.WriteHeader(204)
-			return
-		}
+	original := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originalHits.Add(1)
 		w.Header().Set("Location", destination.URL)
-		w.WriteHeader(308)
+		w.WriteHeader(307)
 	}))
 	defer original.Close()
-	h, _ := newHTTP(original.URL, map[string]string{"Authorization": "Bearer configured", "Proxy-Authorization": "proxy", "Cookie": "secret", "Host": "configured.example", "X-Api-Key": "custom", "Mcp-Param-Tenant": "tenant"})
-	res, err := h.request(context.Background(), "POST", []byte(`{}`), ProtocolVersion)
-	if err != nil {
-		t.Fatal(err)
+	h, _ := newHTTP(original.URL, map[string]string{"Authorization": "Bearer configured", "X-Api-Key": "custom", "Mcp-Param-Tenant": "tenant"})
+	if res, err := h.request(context.Background(), "POST", []byte(`{}`), ProtocolVersion); err == nil {
+		res.Body.Close()
+		t.Fatal("cross-origin MCP redirect was followed")
 	}
-	res.Body.Close()
-	if destinationHits.Load() != 1 || returnHits.Load() != 1 {
-		t.Fatalf("redirect counts %d %d", destinationHits.Load(), returnHits.Load())
+	if destinationHits.Load() != 0 {
+		t.Fatalf("cross-origin destination received %d requests", destinationHits.Load())
+	}
+	if originalHits.Load() != 1 {
+		t.Fatalf("original server hits %d", originalHits.Load())
 	}
 }
 

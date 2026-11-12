@@ -292,7 +292,7 @@ func (p *ProviderClient) payload(input core.Request) (map[string]any, error) {
 	if !thinkingLevel(effort) {
 		return nil, &Error{Code: "UNSUPPORTED_REASONING_EFFORT"}
 	}
-	if len(p.options.ReasoningEfforts) > 0 {
+	if len(p.options.ReasoningEfforts) > 0 && effort != "off" {
 		mapped, ok := p.options.ReasoningEfforts[effort]
 		if !ok {
 			return nil, &Error{Code: "UNSUPPORTED_REASONING_EFFORT"}

@@ -149,3 +149,26 @@ func TestLineEditorBackgroundStreamKeepsPartialLineAndCaret(t *testing.T) {
 		t.Fatalf("fragments did not redraw as one output line: %q", output.String())
 	}
 }
+
+func TestReviewGraphemeCellWidth(t *testing.T) {
+	for _, test := range []struct {
+		text  string
+		cells int
+	}{
+		{"abc", 3},
+		{"中文", 4},
+		{"🇨🇳", 2},
+		{"👩‍💻", 2},
+		{"👍🏽", 2},
+		{"1️⃣", 2},
+		{"e\u0301", 1},
+		{"\t", 8},
+	} {
+		if got := cells([]rune(test.text)); got != test.cells {
+			t.Errorf("cells(%q)=%d want %d", test.text, got, test.cells)
+		}
+	}
+	if end := clusterEnd([]rune("🇨🇳x"), 0); end != 2 {
+		t.Fatalf("flag cluster end=%d", end)
+	}
+}

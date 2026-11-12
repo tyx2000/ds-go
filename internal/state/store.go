@@ -26,9 +26,20 @@ var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 const maxEventBytes = 32 << 20
 
+type eventTail struct {
+	size    int64 // committed byte boundary
+	seq     int64 // last committed sequence number
+	newline bool  // the last committed record lacks its terminating newline
+	modTime int64 // file mtime used to detect appends by other processes
+}
+
 type Store struct {
 	root string
 	mu   sync.Mutex
+	// tails caches the append boundary and sequence of each session log. It is
+	// validated against size and mtime under the global lock, so an append no
+	// longer re-reads and re-decodes the complete history (O(n^2) growth).
+	tails map[string]eventTail
 }
 
 func Open(root string) (*Store, error) {
@@ -222,11 +233,13 @@ func (s *Store) createWithParent(cwd, title, parentID string) (core.Session, err
 	if err := secureDir(dir); err != nil {
 		return core.Session{}, err
 	}
-	if err := s.update(session); err != nil {
+	// Publish the event log before the metadata: a crash in between must not
+	// leave a listed session whose log cannot be opened or appended.
+	if err := atomicWrite(filepath.Join(dir, "events.jsonl"), nil); err != nil {
 		os.RemoveAll(dir)
 		return core.Session{}, err
 	}
-	if err := atomicWrite(filepath.Join(dir, "events.jsonl"), nil); err != nil {
+	if err := s.update(session); err != nil {
 		os.RemoveAll(dir)
 		return core.Session{}, err
 	}
@@ -291,6 +304,29 @@ func (s *Store) update(session core.Session) error {
 	return atomicWrite(filepath.Join(dir, "meta.json"), append(b, '\n'))
 }
 
+// Patch updates only the fields a caller actually changes. Slash commands and
+// background writers must not write a stale cached Session back over a title,
+// plan mode or archive flag committed by another writer.
+func (s *Store) Patch(id string, mutate func(*core.Session) error) (session core.Session, err error) {
+	err = s.withLock(func() error {
+		current, err := s.get(id)
+		if err != nil {
+			return err
+		}
+		previous := current
+		if err = mutate(&current); err != nil {
+			return err
+		}
+		if current.ID != previous.ID || current.ParentID != previous.ParentID || !current.CreatedAt.Equal(previous.CreatedAt) {
+			return errors.New("cannot change session ancestry or creation time")
+		}
+		current.UpdatedAt = time.Now().UTC()
+		session = current
+		return s.update(current)
+	})
+	return
+}
+
 func (s *Store) Update(session core.Session) error {
 	return s.withLock(func() error {
 		old, err := s.get(session.ID)
@@ -316,12 +352,15 @@ func (s *Store) List(includeArchived bool) (sessions []core.Session, err error) 
 			if !validID.MatchString(ent.Name()) {
 				continue
 			}
+			// One half-deleted or corrupt session must not hide every other
+			// session. Skip it; `sessions show/delete` still identifies it by
+			// explicit ID and a repair can be performed separately.
 			if !ent.IsDir() {
-				return fmt.Errorf("invalid session directory %s", ent.Name())
+				continue
 			}
 			session, err := s.get(ent.Name())
 			if err != nil {
-				return err
+				continue
 			}
 			if includeArchived || !session.Archived {
 				sessions = append(sessions, session)
@@ -344,6 +383,9 @@ func readEvents(path string) (events []core.Event, validBytes int64, needsNewlin
 		return nil, 0, false, err
 	}
 	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []core.Event{}, 0, false, nil
+	}
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -370,8 +412,16 @@ func readEvents(path string) (events []core.Event, validBytes int64, needsNewlin
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, 0, false, err
 		}
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			offset += int64(len(line))
+			if errors.Is(err, io.EOF) {
+				return events, offset, false, nil
+			}
+			continue
+		}
 		var ev core.Event
-		decodeErr := json.Unmarshal(bytes.TrimSpace(line), &ev)
+		decodeErr := json.Unmarshal(trimmed, &ev)
 		if decodeErr != nil {
 			if errors.Is(err, io.EOF) {
 				return events, offset, false, nil
@@ -423,15 +473,24 @@ func (s *Store) append(id, turnID, eventType string, data any) (core.Event, erro
 	}
 	dir, _ := s.dir(id)
 	path := filepath.Join(dir, "events.jsonl")
-	events, boundary, newline, err := readEvents(path)
-	if err != nil {
-		return core.Event{}, err
+	boundary, seq, newline := int64(0), int64(0), false
+	if info, statErr := os.Stat(path); statErr == nil {
+		if tail, ok := s.tails[id]; ok && tail.size == info.Size() && tail.modTime == info.ModTime().UnixNano() {
+			boundary, seq, newline = tail.size, tail.seq, tail.newline
+		}
+	}
+	if seq == 0 && boundary == 0 {
+		events, readBoundary, readNewline, err := readEvents(path)
+		if err != nil {
+			return core.Event{}, err
+		}
+		boundary, seq, newline = readBoundary, int64(len(events)), readNewline
 	}
 	eventID, err := newID()
 	if err != nil {
 		return core.Event{}, err
 	}
-	ev := core.Event{Seq: int64(len(events) + 1), ID: eventID, Time: time.Now().UTC(), Type: eventType, TurnID: turnID, Data: payload}
+	ev := core.Event{Seq: seq + 1, ID: eventID, Time: time.Now().UTC(), Type: eventType, TurnID: turnID, Data: payload}
 	line, err := json.Marshal(ev)
 	if err != nil {
 		return core.Event{}, err
@@ -439,7 +498,7 @@ func (s *Store) append(id, turnID, eventType string, data any) (core.Event, erro
 	if len(line)+1 > maxEventBytes {
 		return core.Event{}, fmt.Errorf("event exceeds %d bytes", maxEventBytes)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR, 0600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -460,6 +519,12 @@ func (s *Store) append(id, turnID, eventType string, data any) (core.Event, erro
 	}
 	if err := f.Sync(); err != nil {
 		return core.Event{}, err
+	}
+	if after, statErr := f.Stat(); statErr == nil {
+		if s.tails == nil {
+			s.tails = make(map[string]eventTail)
+		}
+		s.tails[id] = eventTail{size: after.Size(), seq: ev.Seq, newline: false, modTime: after.ModTime().UnixNano()}
 	}
 	session.UpdatedAt = ev.Time
 	if err := s.update(session); err != nil {
@@ -533,7 +598,9 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 		}
 		child.ParentID = id
 		child.Provider = parent.Provider
-		child.Delegated = parent.Delegated
+		// A user-visible fork is a normal session even when its source was a
+		// delegated child; the manager marks delegated forks explicitly.
+		child.Delegated = false
 		child.Plan = plan
 		child.Model = parent.Model
 		child.Thinking = parent.Thinking
@@ -548,6 +615,11 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 		var b bytes.Buffer
 		enc := json.NewEncoder(&b)
 		for _, ev := range events {
+			// Keep historical sequence/time, but never duplicate event IDs
+			// across sessions: they identify a single append.
+			if ev.ID, err = newID(); err != nil {
+				return err
+			}
 			if err := enc.Encode(ev); err != nil {
 				return err
 			}
@@ -567,12 +639,46 @@ func (s *Store) fork(id string, throughSeq int64, completedOnly bool) (child cor
 	return
 }
 
+func writeMarkdownBlocks(out *strings.Builder, blocks []core.Block) {
+	for _, block := range blocks {
+		switch block.Type {
+		case "text":
+			out.WriteString(markdownFence(block.Text) + "\n\n")
+		case "thinking":
+			out.WriteString("<details><summary>Thinking</summary>\n\n" + markdownFence(block.Thinking) + "\n\n</details>\n\n")
+		case "tool_use":
+			fmt.Fprintf(out, "Tool: `%s`\n\n%s\n\n", block.Name, markdownFence(string(block.Input)))
+		case "tool_result":
+			content := ""
+			if text, ok := block.Content.(string); ok {
+				content = text
+			} else if encoded, err := json.Marshal(block.Content); err == nil {
+				content = string(encoded)
+			}
+			fmt.Fprintf(out, "Tool result `%s` (error=%t):\n\n%s\n\n", block.ToolUseID, block.IsError, markdownFence(content))
+		default:
+			fmt.Fprintf(out, "[%s attachment]\n\n", block.Type)
+		}
+	}
+}
+
+// markdownFence uses a fence longer than any backtick run in the content, so
+// model or tool output cannot close the block or inject document structure.
+func markdownFence(text string) string {
+	fence := "```"
+	for strings.Contains(text, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + text + "\n" + fence
+}
+
 func (s *Store) Delete(id string) error {
 	return s.withLock(func() error {
 		if _, err := s.get(id); err != nil {
 			return err
 		}
 		dir, _ := s.dir(id)
+		delete(s.tails, id)
 		f, err := openLock(filepath.Join(dir, ".turn.lock"))
 		if err != nil {
 			return err
@@ -621,6 +727,19 @@ func (s *Store) Export(id, format string) ([]byte, error) {
 		var out strings.Builder
 		fmt.Fprintf(&out, "# %s\n\nSession: `%s`\n\n", strings.ReplaceAll(session.Title, "\n", " "), session.ID)
 		for _, ev := range events {
+			if ev.Type == "context/replace" || ev.Type == "context/compacted" {
+				var checkpoint struct {
+					Messages []core.Message `json:"messages"`
+				}
+				if json.Unmarshal(ev.Data, &checkpoint) == nil {
+					out.WriteString("## compaction checkpoint\n\n")
+					for _, message := range checkpoint.Messages {
+						fmt.Fprintf(&out, "### %s\n\n", message.Role)
+						writeMarkdownBlocks(&out, message.Content)
+					}
+				}
+				continue
+			}
 			messages, input, err := core.UserInputMessages(ev)
 			if err != nil {
 				return nil, err
@@ -643,20 +762,7 @@ func (s *Store) Export(id, format string) ([]byte, error) {
 				} else {
 					fmt.Fprintf(&out, "## %s\n\n", message.Role)
 				}
-				for _, block := range message.Content {
-					switch block.Type {
-					case "text":
-						out.WriteString(block.Text + "\n\n")
-					case "thinking":
-						out.WriteString("<details><summary>Thinking</summary>\n\n" + block.Thinking + "\n\n</details>\n\n")
-					case "tool_use":
-						fmt.Fprintf(&out, "Tool: `%s`\n\n```json\n%s\n```\n\n", block.Name, block.Input)
-					case "tool_result":
-						fmt.Fprintf(&out, "Tool result `%s` (error=%t):\n\n%v\n\n", block.ToolUseID, block.IsError, block.Content)
-					default:
-						fmt.Fprintf(&out, "[%s attachment]\n\n", block.Type)
-					}
-				}
+				writeMarkdownBlocks(&out, message.Content)
 			}
 		}
 		return []byte(out.String()), nil

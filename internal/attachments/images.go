@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -11,11 +12,14 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"errors"
 
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -72,9 +76,30 @@ func (e *ImageError) Error() string { return e.Message }
 // ImageCodecStatus lets doctor disclose the one native codec dependency. PNG,
 // JPEG, GIF and WebP decoding are implemented in Go; alpha conversion uses the
 // installed libwebp command rather than silently dropping transparency.
+var webpEncoderDirs = []string{"/opt/homebrew/bin", "/opt/local/bin", "/usr/local/bin", "/run/current-system/sw/bin", "/usr/bin", "/bin"}
+
+// findWebPEncoder only trusts system package locations. Resolving the encoder
+// through PATH would let a model-writable project directory supply a fake
+// cwebp that runs with the harness's own privileges.
+func findWebPEncoder() (string, error) {
+	for _, dir := range webpEncoderDirs {
+		candidate := filepath.Join(dir, "cwebp")
+		info, err := os.Stat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("cwebp was not found in a trusted system directory")
+}
+
 func ImageCodecStatus() map[string]any {
-	path, err := exec.LookPath("cwebp")
-	return map[string]any{"webp_encoder": path, "webp_encoder_available": err == nil, "transparent_image_conversion_requires": "cwebp (libwebp)"}
+	path, err := findWebPEncoder()
+	available := err == nil
+	value := map[string]any{"webp_encoder_available": available, "transparent_image_conversion_requires": "cwebp (libwebp)"}
+	if available {
+		value["webp_encoder"] = path
+	}
+	return value
 }
 
 func imageFailure(code, message string) error { return &ImageError{Code: code, Message: message} }
@@ -211,7 +236,45 @@ func (s *Store) prepareImage(ctx context.Context, data []byte, mediaType, name s
 // Native WebP's Go decoder handles still frames. The animation container is
 // reduced to its first composited frame, matching the official static-image
 // attachment contract without adding another decoder executable dependency.
+// The decoded byte budget prevents a small 16-bit PNG (8 bytes per pixel)
+// from allocating hundreds of MiB under the pixel-only limit.
+const maxDecodedImageBytes = 256 << 20
+
+func decodedImageBytes(format string, data []byte, config image.Config) int64 {
+	pixels := int64(config.Width) * int64(config.Height)
+	switch format {
+	case "png":
+		if len(data) > 25 && data[25] == 3 {
+			return pixels // palette decodes to one index byte per pixel
+		}
+		depth, samples := int64(8), int64(4)
+		if len(data) > 25 {
+			depth = int64(data[24])
+			switch data[25] {
+			case 0, 3:
+				samples = 1
+			case 2:
+				samples = 3
+			case 4:
+				samples = 2
+			case 6:
+				samples = 4
+			}
+		}
+		if depth == 16 {
+			return pixels * samples * 2
+		}
+		return pixels * samples
+	case "jpeg", "gif", "webp":
+		return pixels * 4
+	}
+	return pixels * 4
+}
+
 func decodeRaster(data []byte, format string, config image.Config) (image.Image, error) {
+	if budget := decodedImageBytes(format, data, config); budget > maxDecodedImageBytes {
+		return nil, imageFailure("IMAGE_DECODE_LIMIT", fmt.Sprintf("Decoded image would exceed the %d MiB memory budget.", maxDecodedImageBytes>>20))
+	}
 	if format == "gif" {
 		return gifFirstCanvas(data, config)
 	}
@@ -441,7 +504,7 @@ func encodeImageWithinBytesAlpha(ctx context.Context, raster image.Image, maxByt
 	if alpha {
 		mediaType = "image/webp"
 		var err error
-		encoder, err = exec.LookPath("cwebp")
+		encoder, err = findWebPEncoder()
 		if err != nil {
 			return nil, "", imageFailure("IMAGE_CODEC_UNAVAILABLE", "Transparent image normalization requires the cwebp encoder (libwebp); install it and retry.")
 		}

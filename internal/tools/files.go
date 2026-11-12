@@ -277,38 +277,52 @@ func searchFiles(ctx context.Context, tc core.ToolContext, input json.RawMessage
 				return nil
 			}
 		}
-		f, e := regularFile(path)
-		if e != nil {
-			skipped++
-			return nil
-		}
-		defer f.Close()
-		scanned++
-		s := bufio.NewScanner(f)
-		s.Buffer(make([]byte, 4096), maxOutputBytes)
-		line := 0
-		for s.Scan() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			line++
-			b := s.Bytes()
-			if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
+		// Close each file before moving on. Deferring Close inside a WalkDir
+		// callback accumulates one descriptor per scanned file and exhausts
+		// the default limit on large repositories.
+		stop, scanErr := func() (bool, error) {
+			f, e := regularFile(path)
+			if e != nil {
 				skipped++
-				break
+				return false, nil
 			}
-			if re.Match(b) {
-				if len(matches) >= a.Limit || outBytes+len(b) > maxOutputBytes {
-					truncated = true
-					return fs.SkipAll
+			defer f.Close()
+			watch := startReadWatchdog(ctx, f)
+			defer watch.stop()
+			scanned++
+			s := bufio.NewScanner(f)
+			s.Buffer(make([]byte, 4096), maxOutputBytes)
+			line := 0
+			for s.Scan() {
+				if err := ctx.Err(); err != nil {
+					return false, err
 				}
-				rel, _ := filepath.Rel(tc.CWD, path)
-				matches = append(matches, match{Path: rel, Line: line, Text: string(b)})
-				outBytes += len(b)
+				line++
+				b := s.Bytes()
+				if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
+					skipped++
+					break
+				}
+				if re.Match(b) {
+					if len(matches) >= a.Limit || outBytes+len(b) > maxOutputBytes {
+						truncated = true
+						return true, nil
+					}
+					rel, _ := filepath.Rel(tc.CWD, path)
+					matches = append(matches, match{Path: rel, Line: line, Text: string(b)})
+					outBytes += len(b)
+				}
 			}
+			if s.Err() != nil {
+				skipped++
+			}
+			return false, nil
+		}()
+		if scanErr != nil {
+			return scanErr
 		}
-		if s.Err() != nil {
-			skipped++
+		if stop {
+			return fs.SkipAll
 		}
 		return nil
 	})

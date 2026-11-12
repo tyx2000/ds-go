@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -51,7 +52,7 @@ func parseSSE(reader io.Reader, emit func(core.Delta)) (core.Response, bool, err
 func consumeSSE(reader io.Reader, consume func(string, string) (bool, error)) error {
 	count := &countReader{reader: io.LimitReader(reader, maxResponseBytes+1)}
 	scanner := bufio.NewScanner(count)
-	scanner.Buffer(make([]byte, 4096), maxEventBytes+1)
+	scanner.Buffer(make([]byte, 4096), maxEventBytes+len("data: ")+2)
 	scanner.Split(sseLine)
 	eventName := ""
 	var data strings.Builder
@@ -97,6 +98,12 @@ func consumeSSE(reader io.Reader, consume func(string, string) (bool, error)) er
 	}
 	if count.n > maxResponseBytes {
 		return &Error{Code: "RESPONSE_LIMIT"}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		if errors.Is(scanErr, bufio.ErrTooLong) {
+			return &Error{Code: "RESPONSE_LIMIT"}
+		}
+		return &Error{Code: "STREAM_CLOSED"}
 	}
 	return closedStream()
 }

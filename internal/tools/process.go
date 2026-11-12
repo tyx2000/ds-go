@@ -59,6 +59,33 @@ func makeToolCommand(ctx context.Context, tc core.ToolContext, mode, executable 
 	return makeCommandAt(ctx, tc.CWD, workspaceRoot(tc), mode, executable, args...)
 }
 
+// Sandbox launchers are resolved from fixed system directories, never from
+// PATH: a model-writable project directory on PATH could otherwise replace the
+// launcher and run the command with no profile at all.
+var sandboxLauncherDirs = []string{"/usr/bin", "/bin", "/usr/local/bin", "/opt/homebrew/bin"}
+
+func trustedSandboxLauncher(name, workspace string) (string, error) {
+	for _, dir := range sandboxLauncherDirs {
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			continue
+		}
+		if info, err = os.Stat(resolved); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if inside(workspace, resolved) {
+			continue
+		}
+		return resolved, nil
+	}
+	return "", fmt.Errorf("%s was not found in a trusted system directory", name)
+}
+
 func makeCommandAt(ctx context.Context, cwd, workspace, mode, executable string, args ...string) (sandboxCommand, error) {
 	resolved, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
@@ -91,15 +118,15 @@ func makeCommandAt(ctx context.Context, cwd, workspace, mode, executable string,
 	if mode != "full-access" {
 		switch runtime.GOOS {
 		case "darwin":
-			path, e := exec.LookPath("sandbox-exec")
+			path, e := trustedSandboxLauncher("sandbox-exec", writable)
 			if e != nil {
 				cleanup()
-				return sandboxCommand{}, errors.New("restricted mode unavailable: macOS sandbox-exec was not found")
+				return sandboxCommand{}, errors.New("restricted mode unavailable: macOS sandbox-exec was not found in a trusted system directory")
 			}
 			// This is filesystem enforcement. Network and process creation retain normal host access.
 			profile := "(version 1)\n(allow default)\n(deny file-write*)\n"
 			profile += "(allow file-write* (subpath " + seatbeltQuote(tmp) + "))\n"
-			profile += "(allow file-write* (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/[0-9]+$\"))\n"
+			profile += "(allow file-write* (literal \"/dev/null\") (regex #\"^/dev/fd/[0-9]+$\"))\n"
 			if mode == "workspace-write" {
 				profile += "(allow file-write* (subpath " + seatbeltQuote(writable) + "))\n"
 			}
@@ -107,12 +134,14 @@ func makeCommandAt(ctx context.Context, cwd, workspace, mode, executable string,
 			command = path
 			backend = "macos-seatbelt"
 		case "linux":
-			path, e := exec.LookPath("bwrap")
+			path, e := trustedSandboxLauncher("bwrap", writable)
 			if e != nil {
 				cleanup()
-				return sandboxCommand{}, errors.New("restricted mode unavailable: install bubblewrap, or deliberately select full-access")
+				return sandboxCommand{}, errors.New("restricted mode unavailable: bubblewrap was not found in a trusted system directory; install it, or deliberately select full-access")
 			}
-			argv = []string{"--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--bind", tmp, tmp, "--chdir", resolved}
+			// A private PID namespace keeps /proc/<pid>/root from exposing the
+			// host mount view through the read-only root bind.
+			argv = []string{"--die-with-parent", "--new-session", "--unshare-pid", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--bind", tmp, tmp, "--chdir", resolved}
 			if mode == "workspace-write" {
 				argv = append(argv, "--bind", writable, writable)
 			}

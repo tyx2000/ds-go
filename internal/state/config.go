@@ -113,6 +113,13 @@ func LoadConfig(root string) (Config, error) {
 	if err := rejectSymlink(p); err != nil {
 		return c, err
 	}
+	if info, statErr := os.Stat(p); statErr == nil && info.Mode().Perm()&0077 != 0 {
+		// Older or hand-copied configs may expose credentials to other local
+		// users. Tighten before reading them.
+		if chmodErr := os.Chmod(p, 0600); chmodErr != nil {
+			return c, chmodErr
+		}
+	}
 	b, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil
@@ -247,6 +254,12 @@ func (c Config) Validate() error {
 		return errors.New("approval_policy must be on-request or never")
 	}
 	for name, s := range c.MCPServers {
+		if s.URL != "" {
+			parsed, err := url.Parse(s.URL)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				return fmt.Errorf("MCP server %q has an invalid URL", name)
+			}
+		}
 		if len(name) < 1 || len(name) > 32 || strings.IndexFunc(name, func(r rune) bool {
 			return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-')
 		}) >= 0 {
@@ -291,15 +304,21 @@ func (c Config) Masked() Config {
 	}
 	servers := make(map[string]MCPServer, len(c.MCPServers))
 	for name, s := range c.MCPServers {
-		if parsed, err := url.Parse(s.URL); err == nil && s.URL != "" {
-			if parsed.User != nil {
-				parsed.User = url.User("********")
+		if s.URL != "" {
+			parsed, err := url.Parse(s.URL)
+			if err != nil {
+				s.URL = "********"
+			} else {
+				if parsed.User != nil {
+					parsed.User = url.User("********")
+				}
+				if parsed.RawQuery != "" {
+					parsed.RawQuery = "redacted"
+				}
+				s.URL = parsed.String()
 			}
-			if parsed.RawQuery != "" {
-				parsed.RawQuery = "redacted"
-			}
-			s.URL = parsed.String()
 		}
+		s.Args = maskMCPArgs(s.Args)
 		env := make(map[string]string, len(s.Env))
 		for k := range s.Env {
 			env[k] = "********"
@@ -331,6 +350,37 @@ func SaveConfig(root string, c Config) error {
 		}
 		return atomicWrite(filepath.Join(s.root, "config.json"), append(b, '\n'))
 	})
+}
+
+var sensitiveMCPArgs = map[string]bool{
+	"--api-key": true, "--apikey": true, "--token": true, "--access-token": true,
+	"--auth-token": true, "--password": true, "--secret": true,
+}
+
+// maskMCPArgs hides credential-shaped command arguments. `config show` must
+// not print a key that was passed to an MCP server on its command line.
+func maskMCPArgs(args []string) []string {
+	out := make([]string, 0, len(args))
+	hideNext := false
+	for _, arg := range args {
+		if hideNext {
+			out = append(out, "********")
+			hideNext = false
+			continue
+		}
+		key, _, inline := strings.Cut(arg, "=")
+		if sensitiveMCPArgs[strings.ToLower(key)] {
+			if inline {
+				out = append(out, key+"=********")
+			} else {
+				out = append(out, arg)
+				hideNext = true
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func oneOf(value string, choices ...string) bool {

@@ -193,7 +193,7 @@ func (c *Client) Stream(ctx context.Context, input core.Request, emit func(core.
 	if err != nil {
 		return core.Response{}, err
 	}
-	if !hasFiles && imageBytes(body) > maxInlineImageBytes {
+	if imageBytes(body) > maxInlineImageBytes {
 		return core.Response{}, &Error{Code: "IMAGE_LIMIT"}
 	}
 	if emit == nil {
@@ -309,7 +309,7 @@ func retryable(err error) bool {
 		return false
 	}
 	switch failure.Code {
-	case "RATE_LIMIT", "SERVER", "TRANSPORT", "TIMEOUT", "STREAM_CLOSED", "EMPTY_RESPONSE":
+	case "RATE_LIMIT", "SERVER", "TRANSPORT", "TIMEOUT", "STREAM_CLOSED":
 		return true
 	}
 	return false
@@ -332,6 +332,10 @@ func (c *Client) responseError(response *http.Response) error {
 		code = "RATE_LIMIT"
 	case core.IsContextWindowExceeded(detail):
 		code = "CONTEXT_WINDOW_EXCEEDED"
+	case response.StatusCode == 408:
+		code = "TIMEOUT"
+	case response.StatusCode == 425:
+		code = "SERVER"
 	case response.StatusCode >= 500:
 		code = "SERVER"
 	case response.StatusCode == 400 || response.StatusCode == 413:

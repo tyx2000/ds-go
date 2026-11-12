@@ -26,6 +26,14 @@ func (a *App) registerWorkingDirectoryTool() error {
 }
 
 func (a *App) activeWorkingDirectory(id string) (string, error) {
+	a.wdMu.Lock()
+	cached, ok := a.wdCache[id]
+	a.wdMu.Unlock()
+	if ok {
+		if info, err := os.Stat(cached); err == nil && info.IsDir() {
+			return cached, nil
+		}
+	}
 	session, err := a.store.Get(id)
 	if err != nil {
 		return "", err
@@ -53,6 +61,12 @@ func (a *App) activeWorkingDirectory(id string) (string, error) {
 	if !filepath.IsAbs(directory) {
 		return "", errors.New("working-directory: defaultDirectory must be absolute")
 	}
+	a.wdMu.Lock()
+	if a.wdCache == nil {
+		a.wdCache = map[string]string{}
+	}
+	a.wdCache[id] = directory
+	a.wdMu.Unlock()
 	return directory, nil
 }
 
@@ -140,6 +154,12 @@ func (a *App) changeWorkingDirectory(ctx context.Context, tc core.ToolContext, r
 	if err != nil {
 		return "", err
 	}
+	a.wdMu.Lock()
+	if a.wdCache == nil {
+		a.wdCache = map[string]string{}
+	}
+	a.wdCache[tc.SessionID] = directory
+	a.wdMu.Unlock()
 	// The immutable change is sufficient for the next request's required context.
 	// Inject through the ordinary step inbox so notices follow every tool result;
 	// a cancelled or unavailable inbox cannot undo the committed transition.

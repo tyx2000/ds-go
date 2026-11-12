@@ -136,20 +136,33 @@ func (a *App) reloadMCP(configured map[string]state.MCPServer) error {
 		}
 		if previous != nil {
 			if err := previous.Close(); err != nil {
-				return fmt.Errorf("close MCP %s before reload: %w", name, err)
+				if errors.Is(err, mcp.ErrIncompleteClose) {
+					return fmt.Errorf("close MCP %s before reload: %w", name, err)
+				}
+				// A best-effort HTTP session termination failure must not pin
+				// the old entry and permanently block configuration reloads.
+				a.mcpLog(fmt.Sprintf("MCP %s close before reload: %v", name, err))
 			}
 		}
 		a.mcpMu.Lock()
 		delete(a.mcpSupervisors, name)
 		delete(a.mcpEntries, name)
+		if a.mcpRetry == nil {
+			a.mcpRetry = map[string]time.Time{}
+		}
+		retryAt := a.mcpRetry[name]
 		a.mcpMu.Unlock()
 		if !exists {
 			continue
 		}
-		a.mcpMu.Lock()
-		a.mcpEntries[name] = next
-		a.mcpMu.Unlock()
 		if next.Disabled {
+			a.mcpMu.Lock()
+			a.mcpEntries[name] = next
+			delete(a.mcpRetry, name)
+			a.mcpMu.Unlock()
+			continue
+		}
+		if time.Now().Before(retryAt) {
 			continue
 		}
 		options := mcp.SupervisorOptions{Name: name, CWD: a.flags.cwd, Server: next, Publish: a.publishMCP, Log: a.mcpLog, FailOnStartupError: next.FailOnStartupError}
@@ -173,10 +186,18 @@ func (a *App) reloadMCP(configured map[string]state.MCPServer) error {
 		}
 		connection, err := mcp.OpenSupervisor(a.mcpContext, options)
 		if err != nil {
+			// Do not record a failed start as "already applied": that would
+			// prevent every later reload from retrying this server. Retry
+			// with a short backoff instead of forking on every 500ms tick.
+			a.mcpMu.Lock()
+			a.mcpRetry[name] = time.Now().Add(5 * time.Second)
+			a.mcpMu.Unlock()
 			return fmt.Errorf("MCP %s: %w", name, err)
 		}
 		a.mcpMu.Lock()
 		a.mcpSupervisors[name] = connection
+		a.mcpEntries[name] = next
+		delete(a.mcpRetry, name)
 		a.mcpMu.Unlock()
 	}
 	enabled := false

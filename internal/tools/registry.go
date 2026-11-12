@@ -12,6 +12,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"dsgo/internal/core"
 	"dsgo/internal/jsonschema"
@@ -162,6 +163,7 @@ func (r *Registry) Execute(ctx context.Context, tc core.ToolContext, name string
 }
 
 func (r *Registry) Close() error {
+	defer r.removeJobSpills()
 	r.mu.Lock()
 	r.closed = true
 	jobs := make([]*job, 0, len(r.jobs))
@@ -173,7 +175,10 @@ func (r *Registry) Close() error {
 		j.cancel()
 	}
 	for _, j := range jobs {
-		<-j.done
+		select {
+		case <-j.done:
+		case <-time.After(2 * time.Second):
+		}
 	}
 	return nil
 }
@@ -181,7 +186,14 @@ func (r *Registry) Close() error {
 // InvalidateSession must be called when a session's standing permission
 // changes or closes. Each bash call starts a fresh shell, so no per-session
 // process state is retained.
-func (r *Registry) InvalidateSession(sessionID string) {}
+func (r *Registry) InvalidateSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	r.mu.Lock()
+	delete(r.observations, sessionID)
+	r.mu.Unlock()
+}
 
 func decode(input json.RawMessage, v any) error {
 	d := json.NewDecoder(bytes.NewReader(input))

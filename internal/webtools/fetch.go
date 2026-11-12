@@ -13,6 +13,14 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	htmlcharset "golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/traditionalchinese"
+	"golang.org/x/text/encoding/unicode"
 )
 
 func validateURL(raw string) (*url.URL, error) {
@@ -167,7 +175,7 @@ func fetchWithClient(ctx context.Context, raw string, baseClient *http.Client) (
 	if bytes.IndexByte(body, 0) >= 0 {
 		return FetchResult{}, webError("WEB_FETCH_UNSUPPORTED_CONTENT", "response contains binary NUL bytes")
 	}
-	text, err := decodeBody(body, strings.ToLower(params["charset"]))
+	text, err := decodeBody(body, strings.ToLower(params["charset"]), kind == "html")
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -178,10 +186,44 @@ func fetchWithClient(ctx context.Context, raw string, baseClient *http.Client) (
 	return FetchResult{URL: res.Request.URL.String(), StatusCode: res.StatusCode, Kind: kind, Body: text, Truncated: truncated}, nil
 }
 
-func decodeBody(body []byte, charset string) (string, error) {
+func decodeBody(body []byte, charset string, isHTML bool) (string, error) {
+	// BOM wins over any declared charset.
+	if bytes.HasPrefix(body, []byte{0xEF, 0xBB, 0xBF}) {
+		body = body[3:]
+		charset = "utf-8"
+	} else if bytes.HasPrefix(body, []byte{0xFF, 0xFE}) || bytes.HasPrefix(body, []byte{0xFE, 0xFF}) {
+		order := unicode.LittleEndian
+		if body[0] == 0xFE {
+			order = unicode.BigEndian
+		}
+		decoded, err := unicode.UTF16(order, unicode.UseBOM).NewDecoder().Bytes(body)
+		if err == nil {
+			return strings.ToValidUTF8(string(decoded), "�"), nil
+		}
+	}
+	if isHTML && charset == "" {
+		// HTML without an explicit charset uses <meta> sniffing, as browsers do.
+		if enc, _, _ := htmlcharset.DetermineEncoding(body, "text/html"); enc != nil {
+			if decoded, err := enc.NewDecoder().Bytes(body); err == nil {
+				return strings.ToValidUTF8(string(decoded), "�"), nil
+			}
+		}
+	}
 	switch charset {
 	case "", "utf-8", "utf8", "us-ascii":
 		return strings.ToValidUTF8(string(body), "�"), nil
+	case "gbk", "gb2312", "gb18030", "x-gbk":
+		return decodeCharset(simplifiedchinese.GBK, body)
+	case "big5", "big-5":
+		return decodeCharset(traditionalchinese.Big5, body)
+	case "shift_jis", "shift-jis", "sjis":
+		return decodeCharset(japanese.ShiftJIS, body)
+	case "euc-jp":
+		return decodeCharset(japanese.EUCJP, body)
+	case "iso-8859-15", "latin9":
+		return decodeCharset(charmap.ISO8859_15, body)
+	case "windows-1251", "cp1251":
+		return decodeCharset(charmap.Windows1251, body)
 	case "iso-8859-1", "latin1", "latin-1":
 		r := make([]rune, len(body))
 		for i, b := range body {
@@ -200,6 +242,16 @@ func decodeBody(body []byte, charset string) (string, error) {
 		}
 		return string(r), nil
 	default:
-		return "", webError("WEB_FETCH_UNSUPPORTED_CONTENT", "unsupported response text charset "+charset)
+		// Unknown labels are common; decode as UTF-8 with replacement rather
+		// than rejecting an otherwise readable page.
+		return strings.ToValidUTF8(string(body), "�"), nil
 	}
+}
+
+func decodeCharset(enc encoding.Encoding, body []byte) (string, error) {
+	decoded, err := enc.NewDecoder().Bytes(body)
+	if err != nil {
+		return strings.ToValidUTF8(string(body), "�"), nil
+	}
+	return strings.ToValidUTF8(string(decoded), "�"), nil
 }

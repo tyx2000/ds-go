@@ -184,3 +184,44 @@ func TestSnapshotCancellationAndStorageSymlinkDenied(t *testing.T) {
 		t.Fatal("symlink store accepted")
 	}
 }
+
+func TestCaptureWithReusesUnchangedFilesAndTracksChanges(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "keep.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "change.txt"), []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(workspace, "node_modules"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "node_modules", "dep.js"), []byte("dep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Capture(context.Background(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "change.txt"), []byte("after!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.CaptureWith(context.Background(), workspace, &first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Files["keep.txt"].Digest != first.Files["keep.txt"].Digest {
+		t.Fatal("unchanged file digest changed")
+	}
+	if second.Files["change.txt"].Digest == first.Files["change.txt"].Digest {
+		t.Fatal("changed file digest was reused")
+	}
+	if _, ok := second.Files["node_modules"]; ok {
+		t.Fatal("excluded directory was captured")
+	}
+}

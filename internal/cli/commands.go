@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dsgo/internal/artifacts"
 	"dsgo/internal/core"
 	"dsgo/internal/state"
 	"dsgo/internal/tools"
@@ -142,7 +143,13 @@ func (a *App) sessions(args []string) error {
 		a.line("%s", clean(string(b)))
 		return nil
 	case "delete":
-		return a.store.Delete(id)
+		if err := a.store.Delete(id); err != nil {
+			return err
+		}
+		if artifactsStore, openErr := artifacts.Open(a.store.Root()); openErr == nil {
+			_ = artifactsStore.DeleteOwner(id)
+		}
+		return nil
 	case "rename", "archive", "unarchive":
 		s, err := a.store.Get(id)
 		if err != nil {
@@ -197,11 +204,20 @@ func (a *App) slash(line string) (bool, error) {
 		if arg == "" {
 			return false, errors.New("title required")
 		}
-		a.session.Title = arg
-		return false, a.store.Update(a.session)
+		updated, err := a.store.Patch(a.session.ID, func(s *core.Session) error {
+			s.Title = arg
+			return nil
+		})
+		if err != nil {
+			return false, err
+		}
+		a.session = updated
+		return false, nil
 	case "archive":
-		a.session.Archived = true
-		if err := a.store.Update(a.session); err != nil {
+		if _, err := a.store.Patch(a.session.ID, func(s *core.Session) error {
+			s.Archived = true
+			return nil
+		}); err != nil {
 			return false, err
 		}
 		return false, a.selectSession("")
@@ -209,25 +225,30 @@ func (a *App) slash(line string) (bool, error) {
 		a.showHistory()
 		return false, nil
 	case "export":
-		args := []string{"export", a.session.ID}
-		args = append(args, strings.Fields(arg)...)
+		format, path := arg, ""
+		if index := strings.IndexByte(arg, ' '); index >= 0 {
+			format, path = arg[:index], strings.TrimSpace(arg[index+1:])
+		}
+		if format == "" {
+			format = "markdown"
+		}
+		args := []string{"export", a.session.ID, format}
+		if path != "" {
+			args = append(args, trimOneQuotePair(path))
+		}
 		return false, a.sessions(args)
 	case "model", "thinking", "permission", "provider":
 		if arg == "" {
 			a.print(a.session)
 			return false, nil
 		}
-		next := a.session
 		cfg := a.cfg
 		switch cmd {
 		case "model":
-			next.Model = arg
 			cfg.Model = arg
 		case "thinking":
-			next.Thinking = arg
 			cfg.Thinking = arg
 		case "permission":
-			next.Permission = arg
 			cfg.Permission = arg
 		case "provider":
 			if arg != "deepseek-official" {
@@ -235,18 +256,33 @@ func (a *App) slash(line string) (bool, error) {
 					return false, errors.New("provider is not configured")
 				}
 			}
-			next.Provider = arg
+			cfg.SelectedProvider = arg
 		}
-		cfg.SelectedProvider = next.Provider
 		if err := cfg.Validate(); err != nil {
 			return false, err
 		}
-		if err := a.store.Update(next); err != nil {
+		updated, err := a.store.Patch(a.session.ID, func(s *core.Session) error {
+			switch cmd {
+			case "model":
+				s.Model = arg
+			case "thinking":
+				s.Thinking = arg
+			case "permission":
+				s.Permission = arg
+			case "provider":
+				s.Provider = arg
+			}
+			return nil
+		})
+		if err != nil {
 			return false, err
 		}
-		a.session = next
+		a.session = updated
+		// New sessions inherit these fields from the current session (see
+		// selectSession); a.cfg stays immutable here because engine
+		// goroutines read it concurrently.
 		if cmd == "permission" {
-			a.registry.InvalidateSession(next.ID)
+			a.registry.InvalidateSession(updated.ID)
 		}
 		return false, nil
 	case "cwd":
@@ -397,7 +433,11 @@ func (a *App) attach(path string) error {
 }
 
 func (a *App) diff() error {
-	cmd := exec.CommandContext(a.ctx, "git", "-C", a.session.CWD, "diff", "--no-ext-diff", "--no-color", "--")
+	directory, err := a.ensureWorkingDirectory(a.ctx, a.session.ID)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(a.ctx, "git", "-C", directory, "diff", "--no-ext-diff", "--no-color", "--")
 	b, err := cmd.Output()
 	if err != nil {
 		return err
@@ -408,6 +448,16 @@ func (a *App) diff() error {
 	}
 	a.line("%s", clean(string(b)))
 	return nil
+}
+
+func trimOneQuotePair(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+	if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+		return value[1 : len(value)-1]
+	}
+	return value
 }
 
 const slashHelp = `Sessions

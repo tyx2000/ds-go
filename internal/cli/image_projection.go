@@ -12,9 +12,10 @@ import (
 )
 
 type catalogFlight struct {
-	done   chan struct{}
-	models []model.ModelInfo
-	err    error
+	done     chan struct{}
+	models   []model.ModelInfo
+	err      error
+	failedAt time.Time
 }
 type deepSeekCatalogCache struct {
 	mu      sync.Mutex
@@ -40,6 +41,19 @@ func (a *App) deepSeekModels(ctx context.Context) ([]model.ModelInfo, error) {
 		cache.entries = make(map[[32]byte]*catalogFlight)
 	}
 	flight := cache.entries[identity]
+	if flight != nil {
+		select {
+		case <-flight.done:
+			// Keep a failed catalog lookup for a short negative-cache window;
+			// otherwise every model step retries a dead endpoint with a 15s
+			// timeout and blocks the turn before any request is sent.
+			if flight.err != nil && time.Since(flight.failedAt) > 30*time.Second {
+				delete(cache.entries, identity)
+				flight = nil
+			}
+		default:
+		}
+	}
 	if flight == nil {
 		flight = &catalogFlight{done: make(chan struct{})}
 		cache.entries[identity] = flight
@@ -54,7 +68,7 @@ func (a *App) deepSeekModels(ctx context.Context) ([]model.ModelInfo, error) {
 			cache.mu.Lock()
 			flight.models, flight.err = models, err
 			if err != nil {
-				delete(cache.entries, identity)
+				flight.failedAt = time.Now()
 			}
 			close(flight.done)
 			cache.mu.Unlock()
@@ -79,6 +93,12 @@ func (a *App) requestProvider(req core.Request) string {
 	return "deepseek-official"
 }
 
+func (a *App) catalogWarning(err error) {
+	a.catalogWarnOnce.Do(func() {
+		a.errorLine("dsgo: model catalog unavailable; using configured context window and default image handling: " + clean(err.Error()))
+	})
+}
+
 func (a *App) deepSeekModel(ctx context.Context, req core.Request) (model.ModelInfo, error) {
 	catalog, err := a.deepSeekModels(ctx)
 	if err != nil {
@@ -100,14 +120,18 @@ func (a *App) projectRequestImage(ctx context.Context, req core.Request, ref att
 	}
 	info, err := a.deepSeekModel(ctx, req)
 	if err != nil {
-		return attachments.ImageProjection{}, err
-	}
-	vision := false
-	for _, modality := range info.InputModalities {
-		vision = vision || modality == "image"
-	}
-	if !vision {
-		return attachments.ImageProjection{Omit: true, Text: attachments.TextOnlyImageHandle(ref)}, nil
+		// A catalog outage must not make every request with a historical
+		// image fail. Continue with the official route's default behaviour
+		// and surface one warning instead.
+		a.catalogWarning(err)
+	} else {
+		vision := false
+		for _, modality := range info.InputModalities {
+			vision = vision || modality == "image"
+		}
+		if !vision {
+			return attachments.ImageProjection{Omit: true, Text: attachments.TextOnlyImageHandle(ref)}, nil
+		}
 	}
 	// Old inline blocks lack a durable attachment identity. Preserve their
 	// bytes and price their actual dimensions rather than inventing a handle.

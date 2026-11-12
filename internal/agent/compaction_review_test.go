@@ -123,3 +123,27 @@ func TestReviewCompactionRetainsActualImageBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReviewCompactionRejectsNonEndTurnSummary(t *testing.T) {
+	for _, stop := range []string{"refusal", "stop_sequence", "pause_turn"} {
+		t.Run(stop, func(t *testing.T) {
+			store, s := setup(t)
+			original := core.TextMessage("user", "IMPORTANT_ORIGINAL_RULE")
+			if _, err := store.Append(s.ID, "old", "user/message", original); err != nil {
+				t.Fatal(err)
+			}
+			model := fakeModel{func(_ context.Context, _ core.Request, _ func(core.Delta)) (core.Response, error) {
+				return core.Response{Content: []core.Block{{Type: "text", Text: "I cannot assist with that."}}, StopReason: stop}, nil
+			}}
+			e := New(store, model, &fakeTools{}, Options{Model: "test-model"})
+			defer e.Close()
+			if err := e.compactAt(context.Background(), s.ID, "now", []core.Message{original}, 1); err == nil {
+				t.Fatalf("%s summary replaced the context", stop)
+			}
+			messages, err := store.Messages(s.ID)
+			if err != nil || len(messages) != 1 || !strings.Contains(messages[0].Content[0].Text, "IMPORTANT_ORIGINAL_RULE") {
+				t.Fatalf("original context lost: %+v %v", messages, err)
+			}
+		})
+	}
+}

@@ -28,16 +28,19 @@ var cache = struct {
 func Compile(raw []byte) (*Schema, error) {
 	key := sha256.Sum256(raw)
 	cache.Lock()
-	defer cache.Unlock()
 	if schema := cache.entries[key]; schema != nil {
+		cache.Unlock()
 		return schema, nil
 	}
+	cache.Unlock()
 	value, err := decode(raw)
 	if err != nil {
 		return nil, err
 	}
 	c := validator.NewCompiler()
-	c.DefaultDraft(validator.Draft2020)
+	// MCP 2024-11-05 (and most hand-written tool schemas) default to draft-07.
+	// A schema that opts into another draft still does so via $schema.
+	c.DefaultDraft(validator.Draft7)
 	c.UseLoader(noExternalResources{})
 	const location = "https://dsgo.invalid/tool-schema.json"
 	if err = c.AddResource(location, value); err != nil {
@@ -48,6 +51,11 @@ func Compile(raw []byte) (*Schema, error) {
 		return nil, err
 	}
 	schema := &Schema{compiled: compiled}
+	cache.Lock()
+	defer cache.Unlock()
+	if existing := cache.entries[key]; existing != nil {
+		return existing, nil
+	}
 	// Bound retained generations when an MCP server changes its schema often.
 	if len(cache.entries) >= 256 {
 		cache.entries = map[[32]byte]*Schema{}

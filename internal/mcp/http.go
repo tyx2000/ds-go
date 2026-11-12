@@ -103,7 +103,7 @@ func (h *httpTransport) requestWithResume(ctx context.Context, method string, me
 		return nil, ErrSessionExpired
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		body, _ := io.ReadAll(res.Body)
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		res.Body.Close()
 		return nil, &HTTPStatusError{StatusCode: res.StatusCode, Body: body}
 	}
@@ -137,6 +137,12 @@ func (c *Client) httpCall(ctx context.Context, message wire, out any) error {
 				return rpc
 			}
 		}
+		if errors.Is(err, ErrSessionExpired) {
+			// The server no longer honors this session. Surface it and let the
+			// supervisor rebuild a new generation; otherwise every later call
+			// keeps failing against the same dead session.
+			c.fail(err)
+		}
 		return err
 	}
 	defer res.Body.Close()
@@ -157,9 +163,13 @@ func (c *Client) httpCall(ctx context.Context, message wire, out any) error {
 	reply := func(answer wire) error { return c.httpNotify(ctx, answer) }
 	switch typeName {
 	case "application/json":
-		b, readErr := io.ReadAll(res.Body)
+		b, readErr := io.ReadAll(io.LimitReader(res.Body, maxHTTPResponseBytes+1))
 		if readErr != nil {
 			err = readErr
+			break
+		}
+		if len(b) > maxHTTPResponseBytes {
+			err = errors.New("MCP HTTP response exceeds the size limit")
 			break
 		}
 		err = c.handle(b, reply)

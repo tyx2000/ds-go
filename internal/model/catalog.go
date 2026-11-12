@@ -107,7 +107,7 @@ func parseCatalog(data []byte) ([]ModelInfo, error) {
 			info.ToolUpdate = "addition-only"
 			info.SystemPromptUpdate = "in-history"
 		}
-		if len(entry.Requirements) > 0 {
+		if rawJSONPresent(entry.Requirements) {
 			var requirements map[string]json.RawMessage
 			if json.Unmarshal(entry.Requirements, &requirements) != nil || requirements == nil {
 				info.Reason = "MODEL_UNSUPPORTED"
@@ -143,13 +143,13 @@ func parseCatalog(data []byte) ([]ModelInfo, error) {
 				info.SystemPromptUpdate = ""
 			}
 		}
-		if len(entry.InputModalities) > 0 {
+		if rawJSONPresent(entry.InputModalities) {
 			info.InputModalities = modalities(entry.InputModalities)
 			if len(info.InputModalities) == 0 {
 				info.Reason = "MODEL_UNSUPPORTED"
 			}
 		}
-		if len(entry.OutputModalities) > 0 {
+		if rawJSONPresent(entry.OutputModalities) {
 			outputs := modalities(entry.OutputModalities)
 			found := false
 			for _, m := range outputs {
@@ -159,12 +159,12 @@ func parseCatalog(data []byte) ([]ModelInfo, error) {
 				info.Reason = "MODEL_UNSUPPORTED"
 			}
 		}
-		if len(entry.ContextWindow) > 0 {
+		if rawJSONPresent(entry.ContextWindow) {
 			if json.Unmarshal(entry.ContextWindow, &info.ContextWindow) != nil || info.ContextWindow <= 0 {
 				info.Reason = "MODEL_UNSUPPORTED"
 			}
 		}
-		if len(entry.MaxOutputTokens) > 0 {
+		if rawJSONPresent(entry.MaxOutputTokens) {
 			if json.Unmarshal(entry.MaxOutputTokens, &info.MaxTokens) != nil || info.MaxTokens <= 0 {
 				info.Reason = "MODEL_UNSUPPORTED"
 			}
@@ -178,10 +178,13 @@ func parseCatalog(data []byte) ([]ModelInfo, error) {
 		info.Supported = info.Reason == ""
 		out = append(out, info)
 	}
-	if len(out) == 0 {
-		return nil, &Error{Code: "INVALID_RESPONSE"}
-	}
 	return out, nil
+}
+
+// null is a valid "field not provided" spelling in JSON APIs, not a value.
+func rawJSONPresent(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return trimmed != "" && trimmed != "null"
 }
 
 func modalities(data []byte) []string {

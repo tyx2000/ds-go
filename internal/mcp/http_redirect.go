@@ -37,6 +37,12 @@ func (h *httpTransport) fetch(req *http.Request) (*http.Response, error) {
 		if (location.Scheme != "http" && location.Scheme != "https") || location.User != nil {
 			return nil, errors.New("MCP redirect requires an HTTP(S) URL without credentials")
 		}
+		// A configured MCP endpoint is a trust boundary. Following a redirect
+		// to another origin would turn the agent into an SSRF hop and would
+		// carry session IDs (and custom credential headers) to a third party.
+		if !sameHTTPOrigin(req.URL, location) {
+			return nil, errors.New("MCP redirect must stay on the configured origin")
+		}
 		if redirects == 20 {
 			return nil, errors.New("MCP redirect count exceeded")
 		}
@@ -63,14 +69,6 @@ func (h *httpTransport) fetch(req *http.Request) (*http.Response, error) {
 			for _, name := range []string{"Content-Encoding", "Content-Language", "Content-Location", "Content-Type", "Content-Length"} {
 				next.Header.Del(name)
 			}
-		}
-		if !sameHTTPOrigin(req.URL, location) {
-			// Custom MCP and user headers continue. Fetch's sensitive-header
-			// list is deliberately narrower than "all custom headers".
-			for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Host"} {
-				next.Header.Del(name)
-			}
-			next.Host = ""
 		}
 		req = next
 	}
